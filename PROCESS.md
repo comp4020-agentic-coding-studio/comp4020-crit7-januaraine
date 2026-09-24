@@ -121,7 +121,28 @@ element reuses the exact same unstyled-width primitives (`form`, `input`,
 `button`, `ul`/`li`) that the pre-existing guestbook form already renders
 correctly at both sizes, plus the invariants suite passing against `/`. That's
 weaker evidence than a real screenshot and I'm flagging it rather than
-claiming a visual check I didn't do.
+claiming a visual check I didn't do. Fourth increment is
+[`dc1a274`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-januaraine/commit/dc1a274).
+
+Fifth increment: replaced the intentional `spec/crit-7.test.ts` placeholder
+with the real check, now that both the API and UI exist. It drives the built
+server over HTTP in the same style as `guestbook.test.ts` and
+`spec/sessions-api.test.ts` (same `post()`/`Origin`-header/`redirect: "manual"`
+shape) rather than calling `addSession`/`listSessions` directly, so it's
+checking the same externally observable contract a browser would see, not the
+implementation behind it: create session A, create overlapping session B,
+assert the create response's redirect exposes the clash
+(`clashesWith=<A's id>`), delete A, then issue a fresh `GET /` and assert the
+reloaded page contains B's course code and does not contain A's. Course codes
+are suffixed with `process.hrtime.bigint()` (the same uniqueness trick
+`guestbook.test.ts` uses for its probe message) so the "A is gone" assertion
+can't accidentally pass or fail because of some other spec file's sessions
+sharing the one throwaway database this run.
+
+`pnpm check`: 0 typecheck errors, 43 passed / 0 failed — the suite is fully
+green for the first time since the placeholder was added. I ran the new test
+on its own first (`vitest run spec/crit-7.test.ts`) to confirm it genuinely
+exercises the flow before trusting it inside the full suite.
 
 I'll keep extending this section, and citing the commits that carry each
 step, as the build continues through the week.
