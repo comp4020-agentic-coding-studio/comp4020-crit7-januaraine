@@ -35,10 +35,6 @@ button {
   font: inherit;
 }
 
-#messages {
-  padding-inline-start: 1.2rem;
-}
-
 .clash-banner {
   border: 2px solid #b00020;
   border-radius: 0.4rem;

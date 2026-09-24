@@ -1,8 +1,7 @@
 ---
-import { listMessages, listSessions } from "../lib/db";
+import { listSessions } from "../lib/db";
 import "../styles.css";
 
-const messages = listMessages();
 const sessions = listSessions();
 
 // The create route (src/pages/api/sessions.ts) carries the outcome of the
@@ -141,22 +140,6 @@ const sessionsByDay = DAY_NAMES.map((name, day) => ({
           ))
         )
       }
-
-      <h2>Guestbook</h2>
-      <p>
-        A minimal full-stack starter: messages live in SQLite on the machine's
-        volume (state survives a reload and a redeploy), and new messages
-        appear in every open tab over a server-sent-events stream — open this
-        page twice and sign it in one.
-      </p>
-      <form method="post" action="/api/messages">
-        <label for="body">Leave a message</label>
-        <input id="body" name="body" required maxlength="500" />
-        <button>Sign</button>
-      </form>
-      <ul id="messages">
-        {messages.map((message) => <li>{message.body}</li>)}
-      </ul>
     </main>
     <script>
       // The add-session form's time pickers are the friendliest widget for
@@ -178,20 +161,6 @@ const sessionsByDay = DAY_NAMES.map((name, day) => ({
         const endField = document.querySelector<HTMLInputElement>("#end_minutes");
         if (startTime && startField) startField.value = String(toMinutes(startTime));
         if (endTime && endField) endField.value = String(toMinutes(endTime));
-      });
-    </script>
-    <script>
-      // The live half of the guestbook demo: subscribe to the SSE stream and
-      // prepend messages as they arrive. The form itself needs none of this —
-      // its POST + redirect re-renders the submitting tab from SQLite; this
-      // stream is how every other tab finds out.
-      const list = document.querySelector("#messages");
-      const source = new EventSource("/api/events");
-      source.addEventListener("message", (event) => {
-        const message = JSON.parse(event.data);
-        const item = document.createElement("li");
-        item.textContent = message.body;
-        list?.prepend(item);
       });
     </script>
   </body>

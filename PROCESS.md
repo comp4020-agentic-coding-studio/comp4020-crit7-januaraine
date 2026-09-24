@@ -142,7 +142,49 @@ sharing the one throwaway database this run.
 `pnpm check`: 0 typecheck errors, 43 passed / 0 failed — the suite is fully
 green for the first time since the placeholder was added. I ran the new test
 on its own first (`vitest run spec/crit-7.test.ts`) to confirm it genuinely
-exercises the flow before trusting it inside the full suite.
+exercises the flow before trusting it inside the full suite. Fifth increment
+is
+[`44b93d7`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-januaraine/commit/44b93d7).
+
+Sixth increment: removed the guestbook/SSE demo now that the timetable is the
+whole product and nothing in the app still depends on it —
+`docs/mvp-plan.md`'s own risk list warned against leaving it half-removed, so
+this is a full retire, not a trim. Deleted `src/pages/api/messages.ts`,
+`src/pages/api/events.ts`, `src/lib/events.ts` (the SSE event bus), and
+`spec/guestbook.test.ts` (`spec/README.md` said it "goes when the starter
+does," so I removed that doc section too rather than leave it describing a
+file that no longer exists). Dropped the `messages` table from
+`src/lib/schema.ts` and its `listMessages`/`addMessage` helpers from
+`src/lib/db.ts`, and ran `pnpm db:generate` for the matching
+`DROP TABLE messages` migration — an unused table and its accessors are dead
+code, not something worth keeping around "just in case." `index.astro` lost
+the guestbook section, its `<ul id="messages">` styling, and the SSE
+`<script>`; the time-picker-to-minutes conversion script for the session form
+stays, since that's still load-bearing.
+
+One thing this touched that isn't application code: `.github/workflows/checks.yml`
+had a deploy-time step curling `/api/events` to prove the SSE stream was
+alive in production. With that endpoint gone the step would fail every future
+deploy, so I removed it rather than leave a CI check asserting a feature that
+no longer exists. I'm flagging this explicitly rather than changing it
+silently, since editing the deploy pipeline is a different kind of change to
+editing app code. Also relabelled the stale `Guestbook` nav link on
+`/readme/` (missed when the homepage nav was relabelled in the UI increment)
+to `Timetable`, and fixed a couple of code comments that named
+`guestbook.test.ts` by name rather than by content, since the file they
+pointed at no longer exists.
+
+Verified locally: restarted the dev server (so the new migration actually ran
+against the existing `.data/app.db`), confirmed `/` and `/readme/` both
+return 200 with zero remaining references to "Guestbook", "messages", or
+`EventSource`, then drove a full create → confirm → delete round trip against
+`/api/sessions` by hand to make sure the sessions flow still works with the
+guestbook plumbing gone. `pnpm check`: 0 typecheck errors, 40 passed / 0
+failed (43 minus the 3 deleted `guestbook.test.ts` cases) — still fully green.
+
+`README.md` itself (the account served at `/readme/`) still describes the
+starter's guestbook demo — rewriting it for the timetable is the next
+increment, not bundled into this one.
 
 I'll keep extending this section, and citing the commits that carry each
 step, as the build continues through the week.

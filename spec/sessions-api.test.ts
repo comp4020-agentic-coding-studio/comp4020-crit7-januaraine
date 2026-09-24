@@ -1,11 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { inject } from "vitest";
 
-// Focused tests for the API only (no UI yet): validation, clash reporting,
-// and that delete actually removes a session rather than just redirecting.
-// Follows guestbook.test.ts's shape — drives the running built server over
-// HTTP. spec/crit-7.test.ts is left untouched; it becomes the full
-// create -> clash -> resolve -> reload test once the UI exists.
+// Focused tests for the API: validation, clash reporting, and that delete
+// actually removes a session rather than just redirecting. Drives the
+// running built server over HTTP, like spec/crit-7.test.ts does for the full
+// create -> clash -> resolve -> reload flow.
 const baseUrl = inject("baseUrl");
 
 // Astro checks form POSTs carry a same-origin Origin header (CSRF
