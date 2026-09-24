@@ -16,3 +16,21 @@ export const messages = sqliteTable("messages", {
 });
 
 export type Message = typeof messages.$inferSelect;
+
+// One row per weekly class session the student has added to their personal
+// timetable. day_of_week is 0=Mon..6=Sun; start/end are minutes since
+// midnight (e.g. 09:00 -> 540) so overlap comparison is plain integer
+// arithmetic — see src/lib/clashes.ts.
+export const sessions = sqliteTable("sessions", {
+  id: int().primaryKey({ autoIncrement: true }),
+  courseCode: text("course_code").notNull(),
+  activity: text().notNull(),
+  dayOfWeek: int("day_of_week").notNull(),
+  startMinutes: int("start_minutes").notNull(),
+  endMinutes: int("end_minutes").notNull(),
+  createdAt: text("created_at")
+    .notNull()
+    .default(sql`(datetime('now'))`),
+});
+
+export type Session = typeof sessions.$inferSelect;
