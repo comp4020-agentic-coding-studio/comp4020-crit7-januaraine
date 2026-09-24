@@ -1,10 +1,10 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import Database from "better-sqlite3";
-import { desc } from "drizzle-orm";
+import { asc, desc, eq } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/better-sqlite3";
 import { migrate } from "drizzle-orm/better-sqlite3/migrator";
-import { type Message, messages } from "./schema";
+import { type Message, messages, type Session, sessions } from "./schema";
 
 // One SQLite file is the app's whole persistent state. In production
 // fly.toml points DATABASE_PATH at the machine's volume (/data), which is
@@ -32,4 +32,32 @@ export function listMessages(): Message[] {
 
 export function addMessage(body: string): Message {
   return db.insert(messages).values({ body }).returning().get();
+}
+
+export type { Session };
+
+export interface NewSession {
+  courseCode: string;
+  activity: string;
+  dayOfWeek: number;
+  startMinutes: number;
+  endMinutes: number;
+}
+
+// Sorted by day then start time so callers can render a weekly timetable
+// straight off this list without re-sorting.
+export function listSessions(): Session[] {
+  return db
+    .select()
+    .from(sessions)
+    .orderBy(asc(sessions.dayOfWeek), asc(sessions.startMinutes))
+    .all();
+}
+
+export function addSession(input: NewSession): Session {
+  return db.insert(sessions).values(input).returning().get();
+}
+
+export function deleteSession(id: number): void {
+  db.delete(sessions).where(eq(sessions.id, id)).run();
 }
