@@ -46,5 +46,33 @@ exactly as-is on purpose: it isn't weakened or removed to force a green
 replaced with the real create → clash → resolve → reload test once the API
 and UI land.
 
+Second increment is
+[`8beb13b`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-januaraine/commit/8beb13b).
+
+Third increment: the API — `POST /api/sessions` and
+`POST /api/sessions/:id/delete` — following the starter's existing
+`/api/messages` shape (a plain form POST, 303 redirect back to `/`, every
+field re-validated server-side rather than trusted from the client). The
+create route re-validates `course_code`, `activity`, `day_of_week` (0–6),
+`start_minutes`/`end_minutes` (in range, and `end > start`), rejecting
+anything invalid with a 400 rather than silently ignoring it. On success it
+snapshots the existing sessions before inserting the new one, runs
+`findClashes` against that snapshot, and carries every clashing session's id
+back to the caller in the redirect's query string (`?added=<id>` and, if any,
+`&clashesWith=<id,id,...>`) — the future UI reads that to render the clash
+banner, without needing a second round trip.
+
+Still no UI, and the guestbook/SSE plumbing is untouched. I added
+`spec/sessions-api.test.ts` — the project's established pattern for this
+(`guestbook.test.ts` drives the running built server over HTTP) — covering
+validation rejections, clash reporting on create, and that delete actually
+removes a session (proven by re-adding a session at the same time and
+checking the deleted one no longer shows up as a clash) rather than just
+redirecting. `spec/crit-7.test.ts` is still deliberately untouched and still
+red: I did not weaken or remove it to force a green `pnpm check` — the real
+create → clash → resolve → reload flow it checks needs the UI, which is the
+next increment. `pnpm check` after this step: 42 passed, 1 failed (that same
+placeholder), 0 typecheck errors.
+
 I'll keep extending this section, and citing the commits that carry each
 step, as the build continues through the week.
