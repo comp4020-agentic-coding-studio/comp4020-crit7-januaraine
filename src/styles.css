@@ -38,3 +38,21 @@ button {
 #messages {
   padding-inline-start: 1.2rem;
 }
+
+.clash-banner {
+  border: 2px solid #b00020;
+  border-radius: 0.4rem;
+  padding: 1rem;
+  margin-block: 1.5rem;
+  background: #fdecea;
+}
+
+.clash-banner h2 {
+  margin-block-start: 0;
+}
+
+section form,
+.clash-banner form {
+  margin-block: 0;
+  display: inline;
+}

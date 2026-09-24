@@ -1,8 +1,43 @@
 ---
-import { listMessages } from "../lib/db";
+import { listMessages, listSessions } from "../lib/db";
 import "../styles.css";
 
 const messages = listMessages();
+const sessions = listSessions();
+
+// The create route (src/pages/api/sessions.ts) carries the outcome of the
+// last add back here via the redirect's query string rather than a second
+// round trip: `added` is the new session's id, `clashesWith` is a
+// comma-separated list of every existing session it overlaps.
+const addedId = Number(Astro.url.searchParams.get("added"));
+const clashIds = new Set(
+  (Astro.url.searchParams.get("clashesWith") ?? "")
+    .split(",")
+    .filter(Boolean)
+    .map(Number),
+);
+
+const addedSession = sessions.find((s) => s.id === addedId);
+const clashSessions = sessions.filter((s) => clashIds.has(s.id));
+
+const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+function formatTime(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function describe(session: (typeof sessions)[number]): string {
+  return `${session.courseCode} ${session.activity} — ${DAY_NAMES[session.dayOfWeek]} ${formatTime(session.startMinutes)}–${formatTime(session.endMinutes)}`;
+}
+
+// Grouped by day, sorted by start time within each day — listSessions()
+// already returns that order, so grouping is a straight filter, no re-sort.
+const sessionsByDay = DAY_NAMES.map((name, day) => ({
+  name,
+  sessions: sessions.filter((s) => s.dayOfWeek === day),
+})).filter((group) => group.sessions.length > 0);
 ---
 
 <!doctype html>
@@ -10,21 +45,109 @@ const messages = listMessages();
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>COMP4020 prototype</title>
+    <title>Timetable Clash Resolver</title>
   </head>
   <body>
     <nav aria-label="site">
-      <a href="/">Guestbook</a>
+      <a href="/">Timetable</a>
       <a href="/readme/">About</a>
     </nav>
     <main>
-      <h1>Guestbook</h1>
+      <h1>My Timetable</h1>
+      <p>
+        Add each weekly class session — lecture, tutorial, lab — and this
+        checks it against every session you've already added. An overlap on
+        the same day is flagged straight away; you decide which side to keep.
+      </p>
+
+      {
+        addedSession && clashSessions.length > 0 && (
+          <div class="clash-banner" role="alert">
+            <h2>Clash detected</h2>
+            <p>The session you just added overlaps {clashSessions.length} existing session{clashSessions.length > 1 ? "s" : ""}:</p>
+            <ul>
+              <li>
+                {describe(addedSession)} (just added)
+                <form method="post" action={`/api/sessions/${addedSession.id}/delete`}>
+                  <button>Remove this one</button>
+                </form>
+              </li>
+              {clashSessions.map((session) => (
+                <li>
+                  {describe(session)}
+                  <form method="post" action={`/api/sessions/${session.id}/delete`}>
+                    <button>Remove this one</button>
+                  </form>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
+      }
+
+      <h2>Add a session</h2>
+      <form method="post" action="/api/sessions" id="add-session-form">
+        <label for="course_code">Course code</label>
+        <input id="course_code" name="course_code" required maxlength="40" placeholder="COMP4020" />
+
+        <label for="activity">Activity</label>
+        <select id="activity" name="activity" required>
+          <option>Lecture</option>
+          <option>Tutorial</option>
+          <option>Lab</option>
+          <option>Seminar</option>
+        </select>
+
+        <label for="day_of_week">Day</label>
+        <select id="day_of_week" name="day_of_week" required>
+          <option value="0">Monday</option>
+          <option value="1">Tuesday</option>
+          <option value="2">Wednesday</option>
+          <option value="3">Thursday</option>
+          <option value="4">Friday</option>
+        </select>
+
+        <label for="start_time">Start time</label>
+        <input id="start_time" type="time" required />
+
+        <label for="end_time">End time</label>
+        <input id="end_time" type="time" required />
+
+        <input type="hidden" name="start_minutes" id="start_minutes" />
+        <input type="hidden" name="end_minutes" id="end_minutes" />
+
+        <button>Add session</button>
+      </form>
+
+      <h2>Your timetable</h2>
+      {
+        sessionsByDay.length === 0 ? (
+          <p>No sessions yet — add one above.</p>
+        ) : (
+          sessionsByDay.map((group) => (
+            <section>
+              <h3>{group.name}</h3>
+              <ul>
+                {group.sessions.map((session) => (
+                  <li>
+                    {session.courseCode} {session.activity} ({formatTime(session.startMinutes)}–{formatTime(session.endMinutes)})
+                    <form method="post" action={`/api/sessions/${session.id}/delete`}>
+                      <button>Remove</button>
+                    </form>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ))
+        )
+      }
+
+      <h2>Guestbook</h2>
       <p>
         A minimal full-stack starter: messages live in SQLite on the machine's
         volume (state survives a reload and a redeploy), and new messages
         appear in every open tab over a server-sent-events stream — open this
-        page twice and sign it in one. Replace all of this with your own
-        prototype.
+        page twice and sign it in one.
       </p>
       <form method="post" action="/api/messages">
         <label for="body">Leave a message</label>
@@ -36,9 +159,31 @@ const messages = listMessages();
       </ul>
     </main>
     <script>
-      // The live half of the demo: subscribe to the SSE stream and prepend
-      // messages as they arrive. The form itself needs none of this — its
-      // POST + redirect re-renders the submitting tab from SQLite; this
+      // The add-session form's time pickers are the friendliest widget for
+      // "start time" / "end time", but the API (src/pages/api/sessions.ts)
+      // takes minutes-since-midnight integers, matching how they're stored
+      // and compared (see src/lib/schema.ts). This converts one to the
+      // other right before submit. Without JS the hidden fields stay empty
+      // and the server rejects the POST with a clear 400 rather than saving
+      // a wrong value.
+      const form = document.querySelector("#add-session-form");
+      form?.addEventListener("submit", () => {
+        const toMinutes = (value: string) => {
+          const [h, m] = value.split(":").map(Number);
+          return h * 60 + m;
+        };
+        const startTime = document.querySelector<HTMLInputElement>("#start_time")?.value;
+        const endTime = document.querySelector<HTMLInputElement>("#end_time")?.value;
+        const startField = document.querySelector<HTMLInputElement>("#start_minutes");
+        const endField = document.querySelector<HTMLInputElement>("#end_minutes");
+        if (startTime && startField) startField.value = String(toMinutes(startTime));
+        if (endTime && endField) endField.value = String(toMinutes(endTime));
+      });
+    </script>
+    <script>
+      // The live half of the guestbook demo: subscribe to the SSE stream and
+      // prepend messages as they arrive. The form itself needs none of this —
+      // its POST + redirect re-renders the submitting tab from SQLite; this
       // stream is how every other tab finds out.
       const list = document.querySelector("#messages");
       const source = new EventSource("/api/events");

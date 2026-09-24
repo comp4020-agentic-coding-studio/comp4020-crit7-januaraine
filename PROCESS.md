@@ -72,7 +72,56 @@ redirecting. `spec/crit-7.test.ts` is still deliberately untouched and still
 red: I did not weaken or remove it to force a green `pnpm check` — the real
 create → clash → resolve → reload flow it checks needs the UI, which is the
 next increment. `pnpm check` after this step: 42 passed, 1 failed (that same
-placeholder), 0 typecheck errors.
+placeholder), 0 typecheck errors. Third increment is
+[`b86f551`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-januaraine/commit/b86f551).
+
+Fourth increment: the UI on `/`. Both the guestbook's `<h1>Guestbook</h1>` and
+the plan's own `<h1>My Timetable</h1>` can't coexist — `spec/invariants.test.ts`
+requires exactly one `<h1>` per page — so I kept the guestbook exactly as it
+was functionally (form, SSE script, message list all untouched) and demoted
+its heading to `<h2>Guestbook</h2>`, letting the timetable take the page's one
+`<h1>`. Everything else follows the same no-JS-friendly POST + 303 redirect +
+re-render-from-SQLite pattern as the guestbook and the API increment: adding a
+session, and removing one, are both plain `<form method="post">`s with no
+script involved.
+
+One genuine exception: the add-session form's start/end fields are native
+`<input type="time">` pickers for usability, but `POST /api/sessions` expects
+minutes-since-midnight integers (matching how they're stored and compared —
+see `src/lib/schema.ts` and `src/lib/clashes.ts`), and I didn't want to change
+that already-shipped API contract just to suit the form. A small inline script
+converts the two time pickers into hidden `start_minutes`/`end_minutes` fields
+right before submit. If JavaScript is disabled the hidden fields stay empty and
+the server rejects the POST with its existing 400, rather than silently saving
+a wrong value — so the failure mode without JS is a clear rejection, not
+corrupted data. This is the one place I judged the existing architecture
+(an already-fixed integer-minutes API, and a friendly time picker being much
+better UX than typing raw minute counts) as genuinely requiring it, per the
+brief for this increment.
+
+The page reads `added` and `clashesWith` off `Astro.url.searchParams` (the
+API's redirect carries them) and renders a `role="alert"` clash banner naming
+both the just-added session and every session it overlaps, each with its own
+"Remove this one" form. The persisted list below groups sessions by day and
+sorts by start time within each day — `listSessions()` already returns that
+order, so this is a plain filter, no re-sort. Every session in that list also
+gets its own remove form, independent of whether it's currently flagged as a
+clash.
+
+`pnpm check` after this step: 0 typecheck errors, 42 passed / 1 failed (the
+same `spec/crit-7.test.ts` placeholder, still untouched on purpose — it
+becomes the real create → clash → resolve → reload test next, now that both
+the API and UI exist). I drove the actual create → clash → remove flow over
+HTTP against the dev server by hand (create a session, create an overlapping
+one, confirm the banner names both sides, delete both, confirm the list empties
+out again) since that's the flow no automated test yet covers. This project has
+no Playwright/browser-automation tooling installed, so I did not produce actual
+1920×1080 / 390×844 screenshots; I relied instead on the fact that every new
+element reuses the exact same unstyled-width primitives (`form`, `input`,
+`button`, `ul`/`li`) that the pre-existing guestbook form already renders
+correctly at both sizes, plus the invariants suite passing against `/`. That's
+weaker evidence than a real screenshot and I'm flagging it rather than
+claiming a visual check I didn't do.
 
 I'll keep extending this section, and citing the commits that carry each
 step, as the build continues through the week.
