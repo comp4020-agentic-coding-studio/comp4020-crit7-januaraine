@@ -47,13 +47,13 @@ const sessionsByDay = DAY_NAMES.map((name, day) => ({
     <title>Timetable Clash Resolver</title>
   </head>
   <body>
-    <nav aria-label="site">
+    <nav aria-label="site" class="site-nav">
       <a href="/">Timetable</a>
       <a href="/readme/">About</a>
     </nav>
     <main>
       <h1>My Timetable</h1>
-      <p>
+      <p class="lede">
         Add each weekly class session — lecture, tutorial, lab — and this
         checks it against every session you've already added. An overlap on
         the same day is flagged straight away; you decide which side to keep.
@@ -61,21 +61,21 @@ const sessionsByDay = DAY_NAMES.map((name, day) => ({
 
       {
         addedSession && clashSessions.length > 0 && (
-          <div class="clash-banner" role="alert">
+          <div class="clash-banner card" role="alert">
             <h2>Clash detected</h2>
             <p>The session you just added overlaps {clashSessions.length} existing session{clashSessions.length > 1 ? "s" : ""}:</p>
-            <ul>
-              <li>
-                {describe(addedSession)} (just added)
-                <form method="post" action={`/api/sessions/${addedSession.id}/delete`}>
-                  <button>Remove this one</button>
+            <ul class="clash-list">
+              <li class="clash-item">
+                <span class="session-meta">{describe(addedSession)} (just added)</span>
+                <form method="post" action={`/api/sessions/${addedSession.id}/delete`} class="inline-form">
+                  <button class="btn btn-danger-outline" type="submit">Remove this one</button>
                 </form>
               </li>
               {clashSessions.map((session) => (
-                <li>
-                  {describe(session)}
-                  <form method="post" action={`/api/sessions/${session.id}/delete`}>
-                    <button>Remove this one</button>
+                <li class="clash-item">
+                  <span class="session-meta">{describe(session)}</span>
+                  <form method="post" action={`/api/sessions/${session.id}/delete`} class="inline-form">
+                    <button class="btn btn-danger-outline" type="submit">Remove this one</button>
                   </form>
                 </li>
               ))}
@@ -84,60 +84,80 @@ const sessionsByDay = DAY_NAMES.map((name, day) => ({
         )
       }
 
-      <h2>Add a session</h2>
-      <form method="post" action="/api/sessions" id="add-session-form">
-        <label for="course_code">Course code</label>
-        <input id="course_code" name="course_code" required maxlength="40" placeholder="COMP4020" />
+      <section class="card add-session-card">
+        <h2>Add a session</h2>
+        <form method="post" action="/api/sessions" id="add-session-form" class="session-form">
+          <div class="field">
+            <label for="course_code">Course code</label>
+            <input id="course_code" name="course_code" required maxlength="40" placeholder="COMP4020" />
+          </div>
 
-        <label for="activity">Activity</label>
-        <select id="activity" name="activity" required>
-          <option>Lecture</option>
-          <option>Tutorial</option>
-          <option>Lab</option>
-          <option>Seminar</option>
-        </select>
+          <div class="field">
+            <label for="activity">Activity</label>
+            <select id="activity" name="activity" required>
+              <option>Lecture</option>
+              <option>Tutorial</option>
+              <option>Lab</option>
+              <option>Seminar</option>
+            </select>
+          </div>
 
-        <label for="day_of_week">Day</label>
-        <select id="day_of_week" name="day_of_week" required>
-          <option value="0">Monday</option>
-          <option value="1">Tuesday</option>
-          <option value="2">Wednesday</option>
-          <option value="3">Thursday</option>
-          <option value="4">Friday</option>
-        </select>
+          <div class="field">
+            <label for="day_of_week">Day</label>
+            <select id="day_of_week" name="day_of_week" required>
+              <option value="0">Monday</option>
+              <option value="1">Tuesday</option>
+              <option value="2">Wednesday</option>
+              <option value="3">Thursday</option>
+              <option value="4">Friday</option>
+            </select>
+          </div>
 
-        <label for="start_time">Start time</label>
-        <input id="start_time" type="time" required />
+          <div class="field">
+            <label for="start_time">Start time</label>
+            <input id="start_time" type="time" required />
+          </div>
 
-        <label for="end_time">End time</label>
-        <input id="end_time" type="time" required />
+          <div class="field">
+            <label for="end_time">End time</label>
+            <input id="end_time" type="time" required />
+          </div>
 
-        <input type="hidden" name="start_minutes" id="start_minutes" />
-        <input type="hidden" name="end_minutes" id="end_minutes" />
+          <input type="hidden" name="start_minutes" id="start_minutes" />
+          <input type="hidden" name="end_minutes" id="end_minutes" />
 
-        <button>Add session</button>
-      </form>
+          <div class="form-actions">
+            <button class="btn btn-primary" type="submit">Add session</button>
+          </div>
+        </form>
+      </section>
 
       <h2>Your timetable</h2>
       {
         sessionsByDay.length === 0 ? (
-          <p>No sessions yet — add one above.</p>
+          <p class="empty-state">No sessions yet — add one above.</p>
         ) : (
-          sessionsByDay.map((group) => (
-            <section>
-              <h3>{group.name}</h3>
-              <ul>
-                {group.sessions.map((session) => (
-                  <li>
-                    {session.courseCode} {session.activity} ({formatTime(session.startMinutes)}–{formatTime(session.endMinutes)})
-                    <form method="post" action={`/api/sessions/${session.id}/delete`}>
-                      <button>Remove</button>
-                    </form>
-                  </li>
-                ))}
-              </ul>
-            </section>
-          ))
+          <div class="timetable-groups">
+            {sessionsByDay.map((group) => (
+              <section class="card day-card">
+                <h3>
+                  {group.name} <span class="day-count">{group.sessions.length}</span>
+                </h3>
+                <ul class="session-list">
+                  {group.sessions.map((session) => (
+                    <li class="session-row">
+                      <span class="session-meta">
+                        {session.courseCode} {session.activity} ({formatTime(session.startMinutes)}–{formatTime(session.endMinutes)})
+                      </span>
+                      <form method="post" action={`/api/sessions/${session.id}/delete`} class="inline-form">
+                        <button class="btn btn-danger-outline" type="submit">Remove</button>
+                      </form>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ))}
+          </div>
         )
       }
     </main>

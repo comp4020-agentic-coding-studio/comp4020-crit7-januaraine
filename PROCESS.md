@@ -182,6 +182,44 @@ return 200 with zero remaining references to "Guestbook", "messages", or
 guestbook plumbing gone. `pnpm check`: 0 typecheck errors, 40 passed / 0
 failed (43 minus the 3 deleted `guestbook.test.ts` cases) — still fully green.
 
+Seventh increment: a UI-polish pass on `/`, requested as the last increment
+before deployment — visual design only, no behaviour change. The brief was
+explicit that this should look like a production app rather than a bare
+assignment page, while leaving the clash-detection rule, the session API,
+the database schema, and the no-JS form flow completely untouched.
+
+`src/styles.css` was rewritten around a small set of CSS custom properties
+(neutral surface/border/text colours, one accent blue, one restrained danger
+red, plus a spacing/radius/shadow scale) instead of the previous handful of
+bare element rules. `src/pages/index.astro` got `class` attributes and a few
+non-semantic wrapper `<div>`s (`.field` around each label+input pair,
+`.card` around the add-session form and each weekday group, `.session-row`/
+`.clash-item` for the list rows) purely as CSS hooks — every element's id,
+`name`, `for`, form `action`, hidden field, heading, and heading order is
+unchanged, and the inline `<script>` that converts the time pickers to
+minutes-since-midnight wasn't touched. The nav bar, the add-session form, the
+clash banner, and each weekday's session list now read as a header bar, a
+card, a restrained red-accented alert card, and grouped cards respectively,
+with unified `.btn` styles (primary for "Add session", danger-outline for
+every "Remove"/"Remove this one") and a `@media (max-width: 600px)` block
+that collapses the form grid and stacks the row actions for phone widths.
+
+Verified: `pnpm check` — 0 typecheck errors, 40 passed / 0 failed, same as
+before this increment (no test was expected to need changes, since none of
+them assert on CSS classes — `spec/invariants.test.ts` only checks structural
+invariants like "exactly one `h1`" and axe violations, which still hold).
+Beyond the automated suite, this repo's `CLAUDE.md` invariant requires any
+UI/CSS change to be checked at both 1920×1080 and 390×844 against a real
+rendered view: built and ran the app with `pnpm preview`, then used
+Playwright's screenshot CLI (`npx playwright screenshot --viewport-size=...`)
+to capture `/` at both sizes, including the clash-banner state (created two
+overlapping demo sessions via `curl` against `/api/sessions` to trigger it,
+screenshotted, then deleted both through `/api/sessions/:id/delete` so they
+don't linger in the shared dev database). Confirmed by eye: the header bar,
+card layout, form grid, clash banner, and weekday groups all render
+correctly at both sizes, with the mobile layout stacking to one column and
+full-width buttons as designed, and no leftover demo data after cleanup.
+
 `README.md` itself (the account served at `/readme/`) still describes the
 starter's guestbook demo — rewriting it for the timetable is the next
 increment, not bundled into this one.
