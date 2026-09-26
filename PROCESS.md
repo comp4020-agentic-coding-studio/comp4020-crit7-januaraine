@@ -224,5 +224,30 @@ full-width buttons as designed, and no leftover demo data after cleanup.
 starter's guestbook demo — rewriting it for the timetable is the next
 increment, not bundled into this one.
 
+Eighth increment: constrained the add-session time pickers to a realistic
+teaching-hours range, per a follow-up request — was a free-form
+`<input type="time">` (any hour 00-23, any minute 00-59), now 08:00-21:00 in
+30-minute steps only (08:00, 08:30, ... no 08:12). A native time input's
+`min`/`max`/`step` attributes don't reliably stop a browser's picker UI from
+still offering every minute, so `src/pages/index.astro` instead generates a
+shared `TIME_OPTIONS` list (08:00 through 21:00 step 30, built from the
+existing `formatTime` helper) and renders both `#start_time` and `#end_time`
+as `<select>`s over that list, each with a disabled `value=""` placeholder
+option so `required` still blocks submission until the user picks one. This
+needed no change to the inline time-to-minutes `<script>` — a `<select>`'s
+`.value` is the same `"HH:MM"` string an `<input type="time">` gave it — nor
+to the session API's validation, which was already out of scope for this UI
+change. Both selects pick up the same base `select` styling already used by
+the Activity/Day fields, so no CSS changes were needed either.
+
+Verified: `pnpm check` — 0 typecheck errors, 40 passed / 0 failed. Confirmed
+the rendered HTML contains exactly the 08:00-21:00-by-30-minutes option list
+for both fields (54 `<option>`s total, none off the half-hour), re-screenshotted
+`/` at 1920×1080 and 390×844 with the same Playwright screenshot CLI as the
+prior UI increment, and drove a full create → verify → delete round trip
+against `/api/sessions` by hand (a session created at 08:30-09:00 persisted
+and then disappeared cleanly on delete), confirming the new controls don't
+affect the existing create/clash/remove/reload flow.
+
 I'll keep extending this section, and citing the commits that carry each
 step, as the build continues through the week.

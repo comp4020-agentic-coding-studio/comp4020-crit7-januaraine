@@ -31,6 +31,18 @@ function describe(session: (typeof sessions)[number]): string {
   return `${session.courseCode} ${session.activity} — ${DAY_NAMES[session.dayOfWeek]} ${formatTime(session.startMinutes)}–${formatTime(session.endMinutes)}`;
 }
 
+// Start/end time pickers offer 08:00-21:00 in 30-minute steps rather than a
+// free-form 24h/60min picker — a native <input type="time">'s min/max/step
+// attributes don't reliably stop a user typing an arbitrary minute, so this
+// uses <select> options instead to make the restriction actually hold.
+const PICKER_START_MINUTES = 8 * 60;
+const PICKER_END_MINUTES = 21 * 60;
+const PICKER_STEP_MINUTES = 30;
+const TIME_OPTIONS: string[] = [];
+for (let m = PICKER_START_MINUTES; m <= PICKER_END_MINUTES; m += PICKER_STEP_MINUTES) {
+  TIME_OPTIONS.push(formatTime(m));
+}
+
 // Grouped by day, sorted by start time within each day — listSessions()
 // already returns that order, so grouping is a straight filter, no re-sort.
 const sessionsByDay = DAY_NAMES.map((name, day) => ({
@@ -115,12 +127,18 @@ const sessionsByDay = DAY_NAMES.map((name, day) => ({
 
           <div class="field">
             <label for="start_time">Start time</label>
-            <input id="start_time" type="time" required />
+            <select id="start_time" required>
+              <option value="" disabled selected>Select a time</option>
+              {TIME_OPTIONS.map((t) => <option value={t}>{t}</option>)}
+            </select>
           </div>
 
           <div class="field">
             <label for="end_time">End time</label>
-            <input id="end_time" type="time" required />
+            <select id="end_time" required>
+              <option value="" disabled selected>Select a time</option>
+              {TIME_OPTIONS.map((t) => <option value={t}>{t}</option>)}
+            </select>
           </div>
 
           <input type="hidden" name="start_minutes" id="start_minutes" />
