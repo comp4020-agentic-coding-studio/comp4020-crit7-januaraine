@@ -229,16 +229,36 @@ teaching-hours range, per a follow-up request — was a free-form
 `<input type="time">` (any hour 00-23, any minute 00-59), now 08:00-21:00 in
 30-minute steps only (08:00, 08:30, ... no 08:12). A native time input's
 `min`/`max`/`step` attributes don't reliably stop a browser's picker UI from
-still offering every minute, so `src/pages/index.astro` instead generates a
-shared `TIME_OPTIONS` list (08:00 through 21:00 step 30, built from the
-existing `formatTime` helper) and renders both `#start_time` and `#end_time`
-as `<select>`s over that list, each with a disabled `value=""` placeholder
-option so `required` still blocks submission until the user picks one. This
-needed no change to the inline time-to-minutes `<script>` — a `<select>`'s
-`.value` is the same `"HH:MM"` string an `<input type="time">` gave it — nor
-to the session API's validation, which was already out of scope for this UI
-change. Both selects pick up the same base `select` styling already used by
-the Activity/Day fields, so no CSS changes were needed either.
+still offering every minute, so this first pass generated a single
+`TIME_OPTIONS` list of combined `"HH:MM"` strings and rendered one `<select>`
+per field over it. The user rejected that shape (a single "Select a time"
+dropdown wasn't what they asked for) and asked for two independent
+dropdowns per field instead — see Ninth increment, which replaces it.
+
+Ninth increment: corrected the time pickers to the two-dropdown structure the
+user actually specified — an Hour `<select>` (08-21) and a Minute `<select>`
+(00, 30) per field, not one combined dropdown. `src/pages/index.astro` now
+generates `HOUR_OPTIONS`/`MINUTE_OPTIONS` and renders each time field as a
+`<fieldset class="time-field">` with a `<legend>` (Start time / End time)
+wrapping two `<select>`s (`#start_hour`/`#start_minute`,
+`#end_hour`/`#end_minute`), each with its own visually-hidden `.sr-only`
+`<label>` so axe/screen readers get an accessible name per control while the
+legend gives the field its visible group label. Each select keeps a disabled
+`value=""` placeholder so `required` still blocks submission until both
+parts are chosen — preserving the no-JS fallback where the server still
+sees empty `start_minutes`/`end_minutes` and rejects the POST with 400. The
+inline `<script>` now combines each pair (`hour * 60 + minute`) into the
+existing hidden `start_minutes`/`end_minutes` fields instead of splitting a
+combined string — the API, clash detection, and persistence are unchanged,
+and no spec file referenced the old `#start_time`/`#end_time` ids (they only
+ever posted the hidden `start_minutes`/`end_minutes` integers), so no test
+changes were needed. `styles.css` adds `.time-field`/`.time-inputs`/
+`.time-part`/`.time-sep`/`.sr-only`: the fieldset itself stays `display:
+block` (a `<legend>` doesn't reliably participate in a flexed `<fieldset>`
+across browsers) and only the inner `.time-inputs` wrapper is flexed to lay
+the two selects side by side. Verified with `pnpm check` (0 typecheck
+errors, 40/40 tests passing, `spec/invariants.test.ts`'s axe/label checks
+included).
 
 Verified: `pnpm check` — 0 typecheck errors, 40 passed / 0 failed. Confirmed
 the rendered HTML contains exactly the 08:00-21:00-by-30-minutes option list

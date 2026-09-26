@@ -164,6 +164,55 @@ select:focus-visible {
   box-shadow: 0 0 0 3px rgba(47, 95, 221, 0.15);
 }
 
+/* Start/end time: fieldset resets to block so its legend behaves like a
+   normal label instead of the cross-browser quirks of flexing a legend
+   directly; only the inner .time-inputs wrapper is flexed. */
+.time-field {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  display: block;
+}
+
+.time-field legend {
+  padding: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-block-end: 0.35rem;
+}
+
+.time-inputs {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.time-part {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.time-sep {
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 .form-actions {
   grid-column: 1 / -1;
   display: flex;
