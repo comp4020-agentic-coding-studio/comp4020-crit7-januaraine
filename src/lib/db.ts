@@ -244,3 +244,26 @@ export function addSessionFromCatalogue(classSessionId: number): Session | undef
     classSessionId: classSession.id,
   });
 }
+
+// The course-card "Add all sessions" action: adds every one of this
+// offering's catalogue sessions that isn't already on the timetable, one
+// addSessionFromCatalogue() call at a time — same insert, same clash
+// detection (recomputed fresh on the next GET /, per findAllClashes), same
+// persistence. There's no unique constraint tying a `sessions` row to its
+// `class_session_id` (a catalogue session can legitimately be added more
+// than once, e.g. deliberate clash fixtures in spec/), so "already added"
+// has to be judged by presence in the current timetable, not a DB conflict.
+export function addAllSessionsForOffering(offeringId: number): Session[] {
+  const alreadyAddedClassSessionIds = new Set(
+    listSessions()
+      .map((s) => s.classSessionId)
+      .filter((id): id is number => id != null),
+  );
+  const created: Session[] = [];
+  for (const classSession of listClassSessions(offeringId)) {
+    if (alreadyAddedClassSessionIds.has(classSession.id)) continue;
+    const session = addSessionFromCatalogue(classSession.id);
+    if (session) created.push(session);
+  }
+  return created;
+}

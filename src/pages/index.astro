@@ -303,6 +303,8 @@ const browsableCourses = searchCourses(query).filter((c) => !selectedOfferingIds
             <div class="course-list">
               {selectedCourses.map((course) => {
                 const available = listClassSessions(course.offeringId);
+                const allAdded =
+                  available.length > 0 && available.every((cs) => sessions.some((s) => s.classSessionId === cs.id));
                 return (
                   <div class="card course-card">
                     <div class="course-card-header">
@@ -312,9 +314,16 @@ const browsableCourses = searchCourses(query).filter((c) => !selectedOfferingIds
                           {course.title} · {course.units} units
                         </p>
                       </div>
-                      <form method="post" action={`/api/courses/${course.offeringId}/remove`} class="inline-form">
-                        <button class="btn btn-danger-outline" type="submit">Remove course</button>
-                      </form>
+                      <div class="course-card-actions">
+                        <form method="post" action={`/api/courses/${course.offeringId}/add-all`} class="inline-form">
+                          <button class="btn btn-primary btn-sm" type="submit" disabled={allAdded}>
+                            {allAdded ? "All sessions added" : "Add all sessions"}
+                          </button>
+                        </form>
+                        <form method="post" action={`/api/courses/${course.offeringId}/remove`} class="inline-form">
+                          <button class="btn btn-danger-outline" type="submit">Remove course</button>
+                        </form>
+                      </div>
                     </div>
                     <ul class="available-sessions">
                       {available.map((cs) => {

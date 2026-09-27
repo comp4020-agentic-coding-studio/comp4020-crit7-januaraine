@@ -355,6 +355,8 @@ h2 {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
+  align-items: center;
+  text-align: center;
   gap: 0.25rem;
   overflow: hidden;
 }
@@ -366,6 +368,7 @@ h2 {
 
 .grid-session-text {
   line-height: 1.35;
+  overflow-wrap: break-word;
 }
 
 /* View mode (default): Remove is hidden so a routine glance at the
@@ -376,7 +379,7 @@ h2 {
    POST the moment it's clicked in edit mode. */
 .grid-session-remove {
   display: none;
-  align-self: flex-start;
+  align-self: center;
 }
 
 .week-grid.edit-mode .grid-session-remove {
@@ -406,6 +409,16 @@ h2 {
   gap: var(--space-3);
   flex-wrap: wrap;
   margin-block-end: var(--space-3);
+}
+
+/* Groups the course-level "Add all sessions" action together with "Remove
+   course" (both act on the whole course), visually separate from the
+   per-session Add/Added buttons in .available-sessions below. */
+.course-card-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
 }
 
 .course-title {
@@ -496,6 +509,11 @@ select:focus-visible {
 
   .grid-scroll-hint {
     display: block;
+  }
+
+  .course-card-actions {
+    width: 100%;
+    align-items: stretch;
   }
 
   .course-card-header .btn {
