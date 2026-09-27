@@ -204,6 +204,102 @@ describe("GET / after a clash redirect", () => {
   });
 });
 
+describe("clash display reflects the full persisted timetable, not just the last create", () => {
+  it("shows every pairwise clash among several mutually overlapping sessions, and keeps showing remaining clashes as sessions are removed", async () => {
+    // A: 10:00-12:00, B: 11:00-13:00, C: 11:30-14:00, all Monday — every pair
+    // overlaps. This is the exact scenario the bug report gave: only the
+    // clash involving the most recently created/deleted session used to
+    // show, dropping others that were still genuinely active.
+    const suffix = process.hrtime.bigint();
+    const courseA = `TRIA${suffix}`;
+    const courseB = `TRIB${suffix}`;
+    const courseC = `TRIC${suffix}`;
+
+    const a = await post(
+      "/api/sessions",
+      session({ course_code: courseA, day_of_week: "0", start_minutes: "600", end_minutes: "720" }),
+    );
+    const aId = addedIdFrom(a);
+    const b = await post(
+      "/api/sessions",
+      session({ course_code: courseB, day_of_week: "0", start_minutes: "660", end_minutes: "780" }),
+    );
+    const bId = addedIdFrom(b);
+    const c = await post(
+      "/api/sessions",
+      session({ course_code: courseC, day_of_week: "0", start_minutes: "690", end_minutes: "840" }),
+    );
+    const cId = addedIdFrom(c);
+
+    const descA = `${courseA} Lecture — Monday 10:00–12:00`;
+    const descB = `${courseB} Lecture — Monday 11:00–13:00`;
+    const descC = `${courseC} Lecture — Monday 11:30–14:00`;
+
+    const htmlAll = await (await fetch(baseUrl)).text();
+    // All three pairwise clashes are visible — not only the one involving C,
+    // the session most recently created.
+    expect(htmlAll).toContain(`${descA} overlaps ${descB}`);
+    expect(htmlAll).toContain(`${descA} overlaps ${descC}`);
+    expect(htmlAll).toContain(`${descB} overlaps ${descC}`);
+
+    // Remove C: A-B still clash and neither side of that pair was just
+    // created or just deleted, so the old redirect-query-param logic would
+    // have shown nothing at all here.
+    await post(`/api/sessions/${cId}/delete`);
+    const htmlAfterC = await (await fetch(baseUrl)).text();
+    expect(htmlAfterC).toContain(`${descA} overlaps ${descB}`);
+    expect(htmlAfterC).not.toContain(courseC);
+
+    // Remove B too: A has no remaining clash partner, so no clash banner
+    // mentions it — even though A itself is still a perfectly valid session
+    // sitting in the plain timetable list.
+    await post(`/api/sessions/${bId}/delete`);
+    const htmlAfterB = await (await fetch(baseUrl)).text();
+    expect(htmlAfterB).not.toContain(`${descA} overlaps`);
+    expect(htmlAfterB).not.toContain(courseB);
+    expect(htmlAfterB).not.toContain(courseC);
+
+    await post(`/api/sessions/${aId}/delete`);
+  });
+
+  it("shows every clash a single session is part of, even when its clash partners don't clash with each other", async () => {
+    // X: 10:00-12:30 overlaps both Y (10:00-10:30) and Z (12:00-12:40), but Y
+    // and Z don't overlap each other — the "one session conflicting with
+    // multiple sessions" case, distinct from a fully mutual 3-way clash.
+    const suffix = process.hrtime.bigint();
+    const courseX = `HUBX${suffix}`;
+    const courseY = `HUBY${suffix}`;
+    const courseZ = `HUBZ${suffix}`;
+
+    const x = await post(
+      "/api/sessions",
+      session({ course_code: courseX, day_of_week: "1", start_minutes: "600", end_minutes: "750" }),
+    );
+    const y = await post(
+      "/api/sessions",
+      session({ course_code: courseY, day_of_week: "1", start_minutes: "600", end_minutes: "630" }),
+    );
+    const z = await post(
+      "/api/sessions",
+      session({ course_code: courseZ, day_of_week: "1", start_minutes: "720", end_minutes: "760" }),
+    );
+
+    const descX = `${courseX} Lecture — Tuesday 10:00–12:30`;
+    const descY = `${courseY} Lecture — Tuesday 10:00–10:30`;
+    const descZ = `${courseZ} Lecture — Tuesday 12:00–12:40`;
+
+    const html = await (await fetch(baseUrl)).text();
+    expect(html).toContain(`${descX} overlaps ${descY}`);
+    expect(html).toContain(`${descX} overlaps ${descZ}`);
+    expect(html).not.toContain(`${descY} overlaps ${descZ}`);
+    expect(html).not.toContain(`${descZ} overlaps ${descY}`);
+
+    await post(`/api/sessions/${addedIdFrom(x)}/delete`);
+    await post(`/api/sessions/${addedIdFrom(y)}/delete`);
+    await post(`/api/sessions/${addedIdFrom(z)}/delete`);
+  });
+});
+
 describe("POST /api/sessions/:id/delete", () => {
   it("removes the session, so it no longer counts towards future clashes", async () => {
     const a = await post("/api/sessions", session({ day_of_week: "3", start_minutes: "540" }));

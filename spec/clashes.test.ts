@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findClashes, sessionsClash } from "../src/lib/clashes";
+import { findAllClashes, findClashes, sessionsClash } from "../src/lib/clashes";
 
 // Pure unit tests for the clash rule (docs/mvp-plan.md section E) — no
 // server needed, so these don't touch `baseUrl` from global-setup.ts.
@@ -73,5 +73,39 @@ describe("findClashes", () => {
     expect(findClashes(candidate, [{ dayOfWeek: 3, startMinutes: 540, endMinutes: 600 }])).toEqual(
       [],
     );
+  });
+});
+
+describe("findAllClashes", () => {
+  // A: 10:00-12:00, B: 11:00-13:00, C: 11:30-14:00, all Monday — every pair
+  // overlaps, matching the reported bug's example.
+  const a = { id: "A", dayOfWeek: 0, startMinutes: 600, endMinutes: 720 };
+  const b = { id: "B", dayOfWeek: 0, startMinutes: 660, endMinutes: 780 };
+  const c = { id: "C", dayOfWeek: 0, startMinutes: 690, endMinutes: 840 };
+
+  it("finds every clashing pair when one session overlaps several others", () => {
+    const solo = { id: "D", dayOfWeek: 1, startMinutes: 540, endMinutes: 600 };
+    const pairs = findAllClashes([a, b, solo]).map(([x, y]) => [x.id, y.id]);
+    expect(pairs).toEqual([["A", "B"]]);
+  });
+
+  it("finds every pairwise clash among several mutually overlapping sessions", () => {
+    const pairs = findAllClashes([a, b, c]).map(([x, y]) => [x.id, y.id]);
+    expect(pairs).toEqual([
+      ["A", "B"],
+      ["A", "C"],
+      ["B", "C"],
+    ]);
+  });
+
+  it("stops reporting a pair once one side is no longer in the list", () => {
+    // Simulates removing C: only the A-B pair should remain.
+    const pairs = findAllClashes([a, b]).map(([x, y]) => [x.id, y.id]);
+    expect(pairs).toEqual([["A", "B"]]);
+  });
+
+  it("reports no clashes once every conflicting session is gone", () => {
+    expect(findAllClashes([a])).toEqual([]);
+    expect(findAllClashes([])).toEqual([]);
   });
 });

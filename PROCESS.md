@@ -373,5 +373,47 @@ non-clashing create still returns a clean `303`, a clashing create still
 reports it, the resulting clash page still loads in ~20ms, deleting either
 side of the clash still works, and a fresh `GET /` still returns `200`.
 
+Twelfth increment: a real bug report, distinct from the eleventh increment's
+non-issue — with several existing sessions clashing with each other, the
+clash banner only ever showed the clash from the most recent create, and
+deleting one conflicting session could make an *unrelated, still-active*
+clash disappear from the UI even though the two sessions in it were both
+still there.
+
+Root cause: `src/pages/index.astro`'s clash banner was derived entirely from
+`Astro.url.searchParams.get("added")`/`clashDetail` — query params carried
+only by the most recent `POST /api/sessions` 303 redirect, i.e. request-scoped
+state, not database state. `POST /api/sessions/:id/delete` redirects to plain
+`/` with no query params at all, so any delete wiped the banner completely,
+regardless of what still clashed. And because `sessions.ts` only ever
+compares a *new* session against the sessions that existed before it, a
+clash between two already-persisted sessions (neither of them "just added")
+was never reported in the first place.
+
+Fix: added `findAllClashes()` to `src/lib/clashes.ts` — a pure function that
+takes any list of sessions and returns every unique pairwise clash among them
+(`i < j` nested loop, so each pair is reported once, not once per direction).
+`src/pages/index.astro` now calls `listSessions()` + `findAllClashes()` fresh
+on every `GET /`, independent of any prior request, and renders one
+clash-group box per pair instead of one box per "session that was just
+added." `sessions.ts`'s existing `added`/`clashesWith`/`clashDetail` redirect
+params are untouched (several existing tests assert on them, and nothing
+about them was actually wrong), as is `findClashes`/`sessionsClash` and the
+delete route — this is additive, not a rewrite of the clash rule itself.
+
+Regression coverage: added a `findAllClashes` unit-test block to
+`spec/clashes.test.ts` (one session clashing with several others; a fully
+mutual 3-way clash producing all three pairs; removing one session from the
+input dropping only its pairs; an empty/single-session list producing no
+pairs). Added two HTTP-level tests to `spec/sessions-api.test.ts` that drive
+the real create/delete flow end-to-end: one reproduces the bug report's exact
+scenario (A/B/C mutually overlapping on Monday) and confirms all three pairs
+render, that deleting C still leaves A-B visible, and that deleting B too
+leaves no clash banner mentioning A (while A itself correctly remains in the
+plain timetable list); the other covers a session clashing with two others
+that don't clash with each other, confirming both of its clashes are shown
+and the unrelated pair isn't invented. Verified with `pnpm check` — 0
+typecheck errors, 50 passed / 0 failed.
+
 I'll keep extending this section, and citing the commits that carry each
 step, as the build continues through the week.

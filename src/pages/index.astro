@@ -1,41 +1,18 @@
 ---
+import { findAllClashes } from "../lib/clashes";
 import { listSessions } from "../lib/db";
 import "../styles.css";
 
 const sessions = listSessions();
 
-// The create route (src/pages/api/sessions.ts) carries the outcome of the
-// last add back here via the redirect's query string rather than a second
-// round trip: `added` is a comma-separated list of the newly created
-// session ids (one per day picked), `clashesWith` is every existing session
-// any of them overlaps (kept for backward compatibility with a single add),
-// and `clashDetail` maps each added id to *its own* clashing ids
-// ("<id>:<clashId1>,<clashId2>;<id>:<clashId3>") so a multi-day submission
-// can report the actual conflicting day/session rather than one flat list.
-const addedIds = new Set(
-  (Astro.url.searchParams.get("added") ?? "")
-    .split(",")
-    .filter(Boolean)
-    .map(Number),
-);
-
-const clashesByAddedId = new Map<number, number[]>();
-for (const entry of (Astro.url.searchParams.get("clashDetail") ?? "").split(";").filter(Boolean)) {
-  const [idPart, clashPart] = entry.split(":");
-  const id = Number(idPart);
-  const clashIds = (clashPart ?? "").split(",").filter(Boolean).map(Number);
-  if (Number.isInteger(id) && clashIds.length > 0) clashesByAddedId.set(id, clashIds);
-}
-
-const sessionsById = new Map(sessions.map((s) => [s.id, s]));
-const clashGroups = sessions
-  .filter((s) => addedIds.has(s.id) && clashesByAddedId.has(s.id))
-  .map((added) => ({
-    added,
-    clashes: (clashesByAddedId.get(added.id) ?? [])
-      .map((id) => sessionsById.get(id))
-      .filter((s): s is (typeof sessions)[number] => Boolean(s)),
-  }));
+// The clash banner reflects the CURRENT persisted timetable, recomputed
+// fresh on every GET — not the outcome of the most recent create, which is
+// all the `added`/`clashDetail` query params from a create redirect could
+// ever describe. Deriving it from `sessions` directly means: removing one
+// side of a multi-way clash still leaves any other clash visible, and a
+// plain reload (no query params at all) still shows every clash that
+// genuinely still exists. See PROCESS.md for the bug this replaced.
+const clashPairs = findAllClashes(sessions);
 
 const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
 
@@ -86,34 +63,32 @@ const sessionsByDay = DAY_NAMES.map((name, day) => ({
       </p>
 
       {
-        clashGroups.length > 0 && (
+        clashPairs.length > 0 && (
           <div class="clash-banner card" role="alert">
             <h2>Clash detected</h2>
             <p>
-              {clashGroups.length === 1
-                ? "The session you just added overlaps an existing one:"
-                : `${clashGroups.length} of the sessions you just added overlap existing ones:`}
+              {clashPairs.length === 1
+                ? "One pair of your sessions overlaps:"
+                : `${clashPairs.length} pairs of your sessions overlap:`}
             </p>
-            {clashGroups.map((group) => (
+            {clashPairs.map(([a, b]) => (
               <div class="clash-group">
                 <p class="clash-group-heading">
-                  {describe(group.added)} overlaps {group.clashes.length} existing session{group.clashes.length > 1 ? "s" : ""}:
+                  {describe(a)} overlaps {describe(b)}:
                 </p>
                 <ul class="clash-list">
                   <li class="clash-item">
-                    <span class="session-meta">{describe(group.added)} (just added)</span>
-                    <form method="post" action={`/api/sessions/${group.added.id}/delete`} class="inline-form">
+                    <span class="session-meta">{describe(a)}</span>
+                    <form method="post" action={`/api/sessions/${a.id}/delete`} class="inline-form">
                       <button class="btn btn-danger-outline" type="submit">Remove this one</button>
                     </form>
                   </li>
-                  {group.clashes.map((session) => (
-                    <li class="clash-item">
-                      <span class="session-meta">{describe(session)}</span>
-                      <form method="post" action={`/api/sessions/${session.id}/delete`} class="inline-form">
-                        <button class="btn btn-danger-outline" type="submit">Remove this one</button>
-                      </form>
-                    </li>
-                  ))}
+                  <li class="clash-item">
+                    <span class="session-meta">{describe(b)}</span>
+                    <form method="post" action={`/api/sessions/${b.id}/delete`} class="inline-form">
+                      <button class="btn btn-danger-outline" type="submit">Remove this one</button>
+                    </form>
+                  </li>
                 </ul>
               </div>
             ))}

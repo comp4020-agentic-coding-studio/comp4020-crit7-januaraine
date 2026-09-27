@@ -19,3 +19,20 @@ export function findClashes<T extends SessionInterval>(
 ): T[] {
   return existing.filter((session) => sessionsClash(candidate, session));
 }
+
+// Every currently-clashing pair among a set of sessions, each pair returned
+// exactly once (not once per direction). This is what the UI needs to show
+// "what's clashing right now" from the full persisted list — a session
+// removed from the input simply stops producing pairs, and a session
+// involved in several clashes appears in each of them.
+export function findAllClashes<T extends SessionInterval>(sessions: readonly T[]): Array<[T, T]> {
+  const pairs: Array<[T, T]> = [];
+  for (let i = 0; i < sessions.length; i++) {
+    for (let j = i + 1; j < sessions.length; j++) {
+      if (sessionsClash(sessions[i], sessions[j])) {
+        pairs.push([sessions[i], sessions[j]]);
+      }
+    }
+  }
+  return pairs;
+}
