@@ -122,6 +122,23 @@ h2 {
   font-weight: 600;
 }
 
+.section-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-block: var(--space-6) var(--space-3);
+  padding-block-end: var(--space-2);
+  border-bottom: 1px solid var(--color-border);
+}
+
+.section-header h2 {
+  margin: 0;
+  padding: 0;
+  border-bottom: none;
+}
+
 /* Card surface, reused by the clash banner, course cards, and the grid section */
 
 .card {
@@ -298,9 +315,10 @@ h2 {
 
 .week-grid {
   display: grid;
-  grid-template-columns: 3.25rem repeat(5, minmax(8rem, 1fr));
+  /* grid-template-columns and min-width are set inline per render — the
+     number of side-by-side sub-columns for each day depends on how many
+     sessions actually overlap that day (src/pages/index.astro's layoutDay). */
   grid-template-rows: auto repeat(26, minmax(1.9rem, auto));
-  min-width: 44rem;
 }
 
 .grid-corner {
@@ -350,8 +368,19 @@ h2 {
   line-height: 1.35;
 }
 
+/* View mode (default): Remove is hidden so a routine glance at the
+   timetable can't accidentally delete a session — conflict indicators
+   above are unaffected, they're part of .grid-session-text. Edit mode
+   re-shows it. This is a pure display toggle, not a change to the
+   underlying form/action, so it stays a real, immediately-persisted
+   POST the moment it's clicked in edit mode. */
 .grid-session-remove {
+  display: none;
   align-self: flex-start;
+}
+
+.week-grid.edit-mode .grid-session-remove {
+  display: inline-flex;
 }
 
 /* Course cards (My Courses + Browse courses) */

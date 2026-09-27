@@ -65,6 +65,109 @@ function gridRowStart(minutes: number): number {
 
 const weekGridSessions = sessions.filter((s) => s.dayOfWeek >= 0 && s.dayOfWeek <= 4);
 
+// Two sessions on the same day at overlapping times used to be placed in the
+// same single grid column, so the later one visually covered the earlier one
+// — a real bug, since "Keep both" guarantees both stay on the timetable. This
+// lays each day's sessions out into parallel sub-columns instead: sessions
+// that don't overlap anything that day still span the whole day (unchanged
+// look), while each cluster of mutually-overlapping sessions gets the
+// minimum number of side-by-side sub-columns needed to show all of them at
+// once (classic interval-graph colouring), so 2+ simultaneous overlaps are
+// all independently visible rather than only the last-painted one.
+type GridSession = (typeof sessions)[number];
+
+interface SessionPlacement {
+  column: number;
+  spanFull: boolean;
+}
+
+interface DayLayout {
+  startColumn: number;
+  columns: number;
+  placements: Map<number, SessionPlacement>;
+}
+
+function layoutDay(daySessions: GridSession[]): { placements: Map<number, SessionPlacement>; columns: number } {
+  const sorted = [...daySessions].sort((a, b) => a.startMinutes - b.startMinutes);
+
+  // Group into clusters of transitively-overlapping sessions: a session
+  // starts a new cluster only once every session in the current cluster has
+  // already finished.
+  const clusters: GridSession[][] = [];
+  let clusterEnd = -Infinity;
+  for (const s of sorted) {
+    if (clusters.length > 0 && s.startMinutes < clusterEnd) {
+      clusters[clusters.length - 1].push(s);
+      clusterEnd = Math.max(clusterEnd, s.endMinutes);
+    } else {
+      clusters.push([s]);
+      clusterEnd = s.endMinutes;
+    }
+  }
+
+  const placements = new Map<number, SessionPlacement>();
+  let columns = 1;
+  for (const cluster of clusters) {
+    if (cluster.length === 1) {
+      placements.set(cluster[0].id, { column: 0, spanFull: true });
+      continue;
+    }
+    // Greedy interval-graph colouring: reuse a column as soon as it's free.
+    const columnEnds: number[] = [];
+    for (const s of cluster) {
+      let col = columnEnds.findIndex((end) => end <= s.startMinutes);
+      if (col === -1) {
+        col = columnEnds.length;
+        columnEnds.push(s.endMinutes);
+      } else {
+        columnEnds[col] = s.endMinutes;
+      }
+      placements.set(s.id, { column: col, spanFull: false });
+    }
+    columns = Math.max(columns, columnEnds.length);
+  }
+
+  return { placements, columns };
+}
+
+const dayLayouts: DayLayout[] = [];
+{
+  let cursor = 2; // grid column 1 is the hour-label gutter
+  for (let day = 0; day <= 4; day++) {
+    const { placements, columns } = layoutDay(weekGridSessions.filter((s) => s.dayOfWeek === day));
+    dayLayouts.push({ startColumn: cursor, columns, placements });
+    cursor += columns;
+  }
+}
+
+const weekGridTemplateColumns = `3.25rem ${dayLayouts
+  .map((d) => `repeat(${d.columns}, minmax(${d.columns > 1 ? "4.5rem" : "8rem"}, 1fr))`)
+  .join(" ")}`;
+const weekGridMinWidthRem = 3.25 + dayLayouts.reduce((sum, d) => sum + d.columns * (d.columns > 1 ? 4.5 : 8), 0);
+
+function sessionGridColumn(session: GridSession): string {
+  const day = dayLayouts[session.dayOfWeek];
+  const placement = day.placements.get(session.id)!;
+  return placement.spanFull
+    ? `grid-column:${day.startColumn} / span ${day.columns}`
+    : `grid-column:${day.startColumn + placement.column} / span 1`;
+}
+
+// The Weekly timetable section defaults to a read-only view (no Remove
+// buttons — conflict indicators still show) so a routine glance can't
+// accidentally delete a session; "Edit" flips it into an editable view with
+// Remove buttons shown. Like the course search below, this is a plain GET
+// query param — no client-side JS, no unsaved state, and Remove itself is
+// still the exact same immediately-persisted server action as before.
+const editMode = Astro.url.searchParams.get("mode") === "edit";
+const toggleModeParams = new URLSearchParams(Astro.url.search);
+if (editMode) {
+  toggleModeParams.delete("mode");
+} else {
+  toggleModeParams.set("mode", "edit");
+}
+const toggleModeHref = `/${toggleModeParams.toString() ? `?${toggleModeParams.toString()}` : ""}`;
+
 const selectedCourses = listSelectedOfferings();
 const selectedOfferingIds = new Set(selectedCourses.map((c) => c.offeringId));
 
@@ -141,7 +244,10 @@ const browsableCourses = searchCourses(query).filter((c) => !selectedOfferingIds
       }
 
       <section class="card timetable-card">
-        <h2>Weekly timetable</h2>
+        <div class="section-header">
+          <h2>Weekly timetable</h2>
+          <a class="btn btn-secondary btn-sm" href={toggleModeHref}>{editMode ? "Done" : "Edit"}</a>
+        </div>
         {
           weekGridSessions.length === 0 ? (
             <p class="empty-state">No sessions yet — add one from a course below.</p>
@@ -150,11 +256,11 @@ const browsableCourses = searchCourses(query).filter((c) => !selectedOfferingIds
               <p class="grid-scroll-hint" aria-hidden="true">
                 Scroll for more days →
               </p>
-              <div class="week-grid">
+              <div class={`week-grid${editMode ? " edit-mode" : ""}`} style={`grid-template-columns:${weekGridTemplateColumns}; min-width:${weekGridMinWidthRem}rem`}>
                 <div class="grid-corner" aria-hidden="true" />
-                {WEEKDAY_SHORT.map((name, i) => (
-                  <div class="grid-day-header" style={`grid-column:${i + 2}`}>
-                    {name}
+                {dayLayouts.map((day, i) => (
+                  <div class="grid-day-header" style={`grid-column:${day.startColumn} / span ${day.columns}`}>
+                    {WEEKDAY_SHORT[i]}
                   </div>
                 ))}
                 {HOURS.map((hour, i) => (
@@ -165,7 +271,7 @@ const browsableCourses = searchCourses(query).filter((c) => !selectedOfferingIds
                 {weekGridSessions.map((session) => (
                   <div
                     class={`grid-session${clashingSessionIds.has(session.id) ? " clashing" : ""}`}
-                    style={`grid-column:${session.dayOfWeek + 2}; grid-row:${gridRowStart(session.startMinutes)} / ${gridRowStart(session.endMinutes)}`}
+                    style={`${sessionGridColumn(session)}; grid-row:${gridRowStart(session.startMinutes)} / ${gridRowStart(session.endMinutes)}`}
                   >
                     <span class="grid-session-text">
                       {clashingSessionIds.has(session.id) && (
