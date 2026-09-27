@@ -19,10 +19,36 @@ const html = (await readme.compiledContent()).replace(/(src|href)="public\//g, '
     <title>{title}</title>
   </head>
   <body>
-    <nav aria-label="site">
-      <a href="/">Timetable</a>
-      <a href="/readme/">About</a>
-    </nav>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="site-brand" href="/">
+          <span class="site-brand-mark">ANU</span>
+          <span class="site-brand-name">Timetable Clash Resolver</span>
+        </a>
+        <nav aria-label="site" class="site-nav">
+          <a href="/">Timetable</a>
+          <a href="/readme/">About</a>
+        </nav>
+      </div>
+    </header>
     <main set:html={html} />
+    <footer class="site-footer">
+      <div class="site-footer-inner">
+        <p>
+          <span class="site-footer-name">Timetable Clash Resolver</span>
+          <span class="site-footer-tagline">ANU Crit 7 prototype</span>
+        </p>
+        <nav aria-label="footer" class="site-footer-links">
+          <a href="/readme/">About</a>
+          <a
+            href="https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-januaraine"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Project repository
+          </a>
+        </nav>
+      </div>
+    </footer>
   </body>
 </html>

@@ -2,6 +2,7 @@
 import { unacknowledgedPairs } from "../lib/acknowledgements";
 import { CATALOGUE_SEMESTER, CATALOGUE_YEAR } from "../lib/catalogue-seed";
 import { findAllClashes } from "../lib/clashes";
+import { anuCourseUrl } from "../lib/course-links";
 import {
   listAcknowledgedPairs,
   listClassSessions,
@@ -67,28 +68,23 @@ const weekGridSessions = sessions.filter((s) => s.dayOfWeek >= 0 && s.dayOfWeek 
 
 // Two sessions on the same day at overlapping times used to be placed in the
 // same single grid column, so the later one visually covered the earlier one
-// — a real bug, since "Keep both" guarantees both stay on the timetable. This
-// lays each day's sessions out into parallel sub-columns instead: sessions
-// that don't overlap anything that day still span the whole day (unchanged
-// look), while each cluster of mutually-overlapping sessions gets the
-// minimum number of side-by-side sub-columns needed to show all of them at
-// once (classic interval-graph colouring), so 2+ simultaneous overlaps are
-// all independently visible rather than only the last-painted one.
+// — a real bug, since "Keep both" guarantees both stay on the timetable. Each
+// day keeps a single, fixed-width grid column regardless of how many
+// sessions overlap it (no more parallel sub-columns eating the day's
+// width) — overlapping sessions instead cascade: a small, bounded
+// horizontal offset per session in a cluster, so every session keeps a
+// visible sliver of its own even when several overlap, without the day
+// column ever growing or shrinking. Vertical position (the time axis) is
+// untouched by any of this — it only ever comes from start/end minutes.
 type GridSession = (typeof sessions)[number];
 
 interface SessionPlacement {
-  column: number;
-  spanFull: boolean;
+  stackIndex: number;
+  clusterSize: number;
 }
 
-interface DayLayout {
-  startColumn: number;
-  columns: number;
-  placements: Map<number, SessionPlacement>;
-}
-
-function layoutDay(daySessions: GridSession[]): { placements: Map<number, SessionPlacement>; columns: number } {
-  const sorted = [...daySessions].sort((a, b) => a.startMinutes - b.startMinutes);
+function layoutDay(daySessions: GridSession[]): Map<number, SessionPlacement> {
+  const sorted = [...daySessions].sort((a, b) => a.startMinutes - b.startMinutes || a.id - b.id);
 
   // Group into clusters of transitively-overlapping sessions: a session
   // starts a new cluster only once every session in the current cluster has
@@ -106,51 +102,51 @@ function layoutDay(daySessions: GridSession[]): { placements: Map<number, Sessio
   }
 
   const placements = new Map<number, SessionPlacement>();
-  let columns = 1;
   for (const cluster of clusters) {
-    if (cluster.length === 1) {
-      placements.set(cluster[0].id, { column: 0, spanFull: true });
-      continue;
-    }
-    // Greedy interval-graph colouring: reuse a column as soon as it's free.
-    const columnEnds: number[] = [];
-    for (const s of cluster) {
-      let col = columnEnds.findIndex((end) => end <= s.startMinutes);
-      if (col === -1) {
-        col = columnEnds.length;
-        columnEnds.push(s.endMinutes);
-      } else {
-        columnEnds[col] = s.endMinutes;
-      }
-      placements.set(s.id, { column: col, spanFull: false });
-    }
-    columns = Math.max(columns, columnEnds.length);
+    cluster.forEach((s, i) => placements.set(s.id, { stackIndex: i, clusterSize: cluster.length }));
   }
-
-  return { placements, columns };
+  return placements;
 }
 
-const dayLayouts: DayLayout[] = [];
-{
-  let cursor = 2; // grid column 1 is the hour-label gutter
-  for (let day = 0; day <= 4; day++) {
-    const { placements, columns } = layoutDay(weekGridSessions.filter((s) => s.dayOfWeek === day));
-    dayLayouts.push({ startColumn: cursor, columns, placements });
-    cursor += columns;
+const placements = new Map<number, SessionPlacement>();
+for (let day = 0; day <= 4; day++) {
+  for (const [id, placement] of layoutDay(weekGridSessions.filter((s) => s.dayOfWeek === day))) {
+    placements.set(id, placement);
   }
 }
 
-const weekGridTemplateColumns = `3.25rem ${dayLayouts
-  .map((d) => `repeat(${d.columns}, minmax(${d.columns > 1 ? "4.5rem" : "8rem"}, 1fr))`)
-  .join(" ")}`;
-const weekGridMinWidthRem = 3.25 + dayLayouts.reduce((sum, d) => sum + d.columns * (d.columns > 1 ? 4.5 : 8), 0);
+const weekGridTemplateColumns = `3.25rem repeat(${WEEKDAY_SHORT.length}, minmax(8rem, 1fr))`;
+const weekGridMinWidthRem = 3.25 + WEEKDAY_SHORT.length * 8;
 
 function sessionGridColumn(session: GridSession): string {
-  const day = dayLayouts[session.dayOfWeek];
-  const placement = day.placements.get(session.id)!;
-  return placement.spanFull
-    ? `grid-column:${day.startColumn} / span ${day.columns}`
-    : `grid-column:${day.startColumn + placement.column} / span 1`;
+  return `grid-column:${session.dayOfWeek + 2} / span 1`;
+}
+
+// The total horizontal offset budget (as a % of the day column's width) is
+// split evenly across a cluster's sessions, so every session gets a
+// distinct, non-zero offset — no two sessions are ever placed exactly on
+// top of each other, however many overlap — while the budget itself never
+// grows, keeping the day column's overall width fixed.
+const MAX_STACK_OFFSET_PERCENT = 30;
+
+function stackStyle(session: GridSession): string {
+  const placement = placements.get(session.id);
+  if (!placement || placement.clusterSize <= 1) return "";
+  const step = MAX_STACK_OFFSET_PERCENT / (placement.clusterSize - 1);
+  const offset = step * placement.stackIndex;
+  return `margin-inline-start:${offset}%; width:${100 - offset}%; z-index:${placement.stackIndex + 1};`;
+}
+
+// For a clashing session, every other session it overlaps — derived purely
+// from the clash pairs already computed above (findAllClashes), never a
+// second overlap check. Acknowledging a pair only removes it from the top
+// alert (alertPairs); it stays in clashPairs, so it still appears here.
+const overlapsBySessionId = new Map<number, GridSession[]>();
+for (const [a, b] of clashPairs) {
+  if (!overlapsBySessionId.has(a.id)) overlapsBySessionId.set(a.id, []);
+  if (!overlapsBySessionId.has(b.id)) overlapsBySessionId.set(b.id, []);
+  overlapsBySessionId.get(a.id)!.push(b);
+  overlapsBySessionId.get(b.id)!.push(a);
 }
 
 // The Weekly timetable section defaults to a read-only view (no Remove
@@ -186,10 +182,18 @@ const browsableCourses = searchCourses(query).filter((c) => !selectedOfferingIds
     <title>Timetable Clash Resolver</title>
   </head>
   <body>
-    <nav aria-label="site" class="site-nav">
-      <a href="/">Timetable</a>
-      <a href="/readme/">About</a>
-    </nav>
+    <header class="site-header">
+      <div class="site-header-inner">
+        <a class="site-brand" href="/">
+          <span class="site-brand-mark">ANU</span>
+          <span class="site-brand-name">Timetable Clash Resolver</span>
+        </a>
+        <nav aria-label="site" class="site-nav">
+          <a href="/">Timetable</a>
+          <a href="/readme/">About</a>
+        </nav>
+      </div>
+    </header>
     <main>
       <h1>My Timetable</h1>
       <p class="lede summary-line">
@@ -214,7 +218,7 @@ const browsableCourses = searchCourses(query).filter((c) => !selectedOfferingIds
                 : `${alertPairs.length} pairs of your sessions overlap:`}
             </p>
             {alertPairs.map(([a, b]) => (
-              <div class="clash-group">
+              <div class="clash-group" data-session-a={a.id} data-session-b={b.id}>
                 <p class="clash-group-heading">
                   {describe(a)} overlaps {describe(b)}:
                 </p>
@@ -222,12 +226,14 @@ const browsableCourses = searchCourses(query).filter((c) => !selectedOfferingIds
                   <li class="clash-item">
                     <span class="session-meta">{describe(a)}</span>
                     <form method="post" action={`/api/sessions/${a.id}/delete`} class="inline-form">
+                      {editMode && <input type="hidden" name="mode" value="edit" />}
                       <button class="btn btn-danger-outline" type="submit">Remove this one</button>
                     </form>
                   </li>
                   <li class="clash-item">
                     <span class="session-meta">{describe(b)}</span>
                     <form method="post" action={`/api/sessions/${b.id}/delete`} class="inline-form">
+                      {editMode && <input type="hidden" name="mode" value="edit" />}
                       <button class="btn btn-danger-outline" type="submit">Remove this one</button>
                     </form>
                   </li>
@@ -258,9 +264,9 @@ const browsableCourses = searchCourses(query).filter((c) => !selectedOfferingIds
               </p>
               <div class={`week-grid${editMode ? " edit-mode" : ""}`} style={`grid-template-columns:${weekGridTemplateColumns}; min-width:${weekGridMinWidthRem}rem`}>
                 <div class="grid-corner" aria-hidden="true" />
-                {dayLayouts.map((day, i) => (
-                  <div class="grid-day-header" style={`grid-column:${day.startColumn} / span ${day.columns}`}>
-                    {WEEKDAY_SHORT[i]}
+                {WEEKDAY_SHORT.map((label, i) => (
+                  <div class="grid-day-header" style={`grid-column:${i + 2} / span 1`}>
+                    {label}
                   </div>
                 ))}
                 {HOURS.map((hour, i) => (
@@ -268,26 +274,79 @@ const browsableCourses = searchCourses(query).filter((c) => !selectedOfferingIds
                     {String(hour).padStart(2, "0")}:00
                   </div>
                 ))}
-                {weekGridSessions.map((session) => (
-                  <div
-                    class={`grid-session${clashingSessionIds.has(session.id) ? " clashing" : ""}`}
-                    style={`${sessionGridColumn(session)}; grid-row:${gridRowStart(session.startMinutes)} / ${gridRowStart(session.endMinutes)}`}
-                  >
-                    <span class="grid-session-text">
-                      {clashingSessionIds.has(session.id) && (
-                        <span class="clash-indicator" title="Clashes with another session" aria-label="Clashes with another session">
-                          ⚠
+                {weekGridSessions.map((session) => {
+                  const isClashing = clashingSessionIds.has(session.id);
+                  const overlaps = overlapsBySessionId.get(session.id) ?? [];
+                  const popoverId = `clash-popover-${session.id}`;
+                  return (
+                    <div
+                      class={`grid-session${isClashing ? " clashing" : ""}`}
+                      data-session-id={session.id}
+                      style={`${sessionGridColumn(session)}; grid-row:${gridRowStart(session.startMinutes)} / ${gridRowStart(session.endMinutes)}; ${stackStyle(session)}`}
+                    >
+                      {isClashing ? (
+                        <button
+                          type="button"
+                          class="clash-toggle"
+                          aria-expanded="false"
+                          aria-haspopup="true"
+                          aria-controls={popoverId}
+                        >
+                          <span class="grid-session-text">
+                            <span class="clash-indicator" aria-hidden="true">⚠</span>
+                            <strong>{session.courseCode}</strong> {session.activity}
+                            <br />
+                            {formatTime(session.startMinutes)}–{formatTime(session.endMinutes)}
+                            <span class="clash-count-hint">
+                              {overlaps.length} overlapping session{overlaps.length === 1 ? "" : "s"}
+                            </span>
+                          </span>
+                        </button>
+                      ) : (
+                        <span class="grid-session-text">
+                          <strong>{session.courseCode}</strong> {session.activity}
+                          <br />
+                          {formatTime(session.startMinutes)}–{formatTime(session.endMinutes)}
                         </span>
                       )}
-                      <strong>{session.courseCode}</strong> {session.activity}
-                      <br />
-                      {formatTime(session.startMinutes)}–{formatTime(session.endMinutes)}
-                    </span>
-                    <form method="post" action={`/api/sessions/${session.id}/delete`} class="inline-form grid-session-remove">
-                      <button class="btn btn-danger-outline btn-sm" type="submit">Remove</button>
-                    </form>
-                  </div>
-                ))}
+                      <form method="post" action={`/api/sessions/${session.id}/delete`} class="inline-form grid-session-remove">
+                        {editMode && <input type="hidden" name="mode" value="edit" />}
+                        <button class="btn btn-danger-outline btn-sm" type="submit">Remove</button>
+                      </form>
+                      {isClashing && (
+                        // Rendered after the Remove form (not before) so the
+                        // popover's own text never sits between the ⚠
+                        // indicator and this session's delete-form marker in
+                        // the raw HTML — see spec/acknowledgements-api.test.ts's
+                        // hasClashIndicator. Purely a DOM-order choice: the
+                        // popover is position:fixed and hidden by default, so
+                        // this has no visual effect either open or closed.
+                        <div id={popoverId} class="clash-popover" role="group" aria-label="Schedule conflict details" hidden={true}>
+                          <p class="clash-popover-title">Schedule conflict</p>
+                          <p class="clash-popover-current">
+                            <strong>
+                              {session.courseCode} {session.activity}
+                            </strong>
+                            <br />
+                            {WEEKDAY_SHORT[session.dayOfWeek]} {formatTime(session.startMinutes)}–{formatTime(session.endMinutes)}
+                          </p>
+                          <p class="clash-popover-label">Overlaps with:</p>
+                          <ul class="clash-popover-list">
+                            {overlaps.map((o) => (
+                              <li>
+                                <strong>
+                                  {o.courseCode} {o.activity}
+                                </strong>
+                                <br />
+                                {WEEKDAY_SHORT[o.dayOfWeek]} {formatTime(o.startMinutes)}–{formatTime(o.endMinutes)}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
               </div>
             </div>
           )
@@ -306,7 +365,7 @@ const browsableCourses = searchCourses(query).filter((c) => !selectedOfferingIds
                 const allAdded =
                   available.length > 0 && available.every((cs) => sessions.some((s) => s.classSessionId === cs.id));
                 return (
-                  <div class="card course-card">
+                  <div class="card course-card" data-offering-id={course.offeringId}>
                     <div class="course-card-header">
                       <div>
                         <h3>{course.code}</h3>
@@ -372,9 +431,28 @@ const browsableCourses = searchCourses(query).filter((c) => !selectedOfferingIds
             <div class="course-grid">
               {browsableCourses.map((course) => (
                 <div class="card course-card">
-                  <h3>{course.code}</h3>
+                  <h3>
+                    <a
+                      class="course-code-link"
+                      href={anuCourseUrl(course.code)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {course.code}
+                      <span class="sr-only"> (opens the official ANU course page in a new tab)</span>
+                    </a>
+                  </h3>
                   <p class="course-title">
-                    {course.title} · {course.units} units · Semester {course.semester}, {course.year}
+                    <a
+                      class="course-title-link"
+                      href={anuCourseUrl(course.code)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      {course.title}
+                      <span class="sr-only"> (opens the official ANU course page in a new tab)</span>
+                    </a>{" "}
+                    · {course.units} units · Semester {course.semester}, {course.year}
                   </p>
                   <form method="post" action="/api/courses/select" class="inline-form">
                     <input type="hidden" name="offering_id" value={course.offeringId} />
@@ -387,5 +465,312 @@ const browsableCourses = searchCourses(query).filter((c) => !selectedOfferingIds
         }
       </section>
     </main>
+    <footer class="site-footer">
+      <div class="site-footer-inner">
+        <p>
+          <span class="site-footer-name">Timetable Clash Resolver</span>
+          <span class="site-footer-tagline">ANU Crit 7 prototype</span>
+        </p>
+        <nav aria-label="footer" class="site-footer-links">
+          <a href="/readme/">About</a>
+          <a
+            href="https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-januaraine"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Project repository
+          </a>
+        </nav>
+      </div>
+    </footer>
+    <script>
+      import gsap from "gsap";
+      import {
+        DURATION,
+        EASE,
+        STAGGER,
+        prefersReducedMotion,
+        entranceIn,
+        emphasizeOnce,
+        exitOut,
+        popoverIn,
+        popoverOut,
+        bringToFront,
+      } from "../lib/motion";
+
+      // Every mutating action in this app is a full page reload (see
+      // src/pages/api/**) — there's no client-side "before" DOM to diff. The
+      // API routes attach non-authoritative `added`/`selectedOffering` hints
+      // to their redirect purely so this script knows which elements are new
+      // *this* load; the actual state always comes from the server-rendered
+      // markup, never from these params. They're stripped immediately so a
+      // refresh or back-navigation never replays an entrance.
+      const url = new URL(window.location.href);
+      const addedIds = new Set(
+        (url.searchParams.get("added") ?? "")
+          .split(",")
+          .map((raw) => Number(raw))
+          .filter((n) => Number.isInteger(n)),
+      );
+      const selectedOfferingId = url.searchParams.get("selectedOffering");
+      if (url.searchParams.has("added") || url.searchParams.has("selectedOffering")) {
+        url.searchParams.delete("added");
+        url.searchParams.delete("selectedOffering");
+        const query = url.searchParams.toString();
+        history.replaceState(null, "", query ? `${url.pathname}?${query}` : url.pathname);
+      }
+
+      // Browse Courses entrance: heading -> supporting text/search -> cards,
+      // small stagger. This plays on every load (it really is a fresh
+      // navigation each time in this architecture) but is short enough not
+      // to feel like a replay.
+      (function browseCoursesEntrance() {
+        if (prefersReducedMotion()) return; // already visible; nothing to do
+        const section = document.querySelector(".browse-courses-card");
+        if (!section) return;
+        const heading = section.querySelector("h2");
+        const supporting = section.querySelectorAll(".lede, .course-search-form");
+        const cards = section.querySelectorAll(".course-card");
+        const tl = gsap.timeline();
+        if (heading) {
+          tl.fromTo(heading, { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: DURATION.entrance, ease: EASE });
+        }
+        if (supporting.length > 0) {
+          tl.fromTo(
+            supporting,
+            { opacity: 0, y: 10 },
+            { opacity: 1, y: 0, duration: DURATION.entrance, ease: EASE, stagger: STAGGER },
+            "-=0.15",
+          );
+        }
+        if (cards.length > 0) {
+          tl.fromTo(
+            cards,
+            { opacity: 0, y: 12, scale: 0.98 },
+            { opacity: 1, y: 0, scale: 1, duration: DURATION.entrance, ease: EASE, stagger: STAGGER },
+            "-=0.1",
+          );
+        }
+      })();
+
+      // Newly-added timetable sessions (an individual Add, or Add All).
+      // Only these cards animate — every other, already-present card is
+      // left exactly as rendered, no replay.
+      (function addedSessionsEntrance() {
+        if (addedIds.size === 0) return;
+        const matched: HTMLElement[] = [];
+        for (const id of addedIds) {
+          const el = document.querySelector<HTMLElement>(`.grid-session[data-session-id="${id}"]`);
+          if (el) matched.push(el);
+        }
+        if (matched.length > 0) entranceIn(matched);
+
+        // A brand-new session can only clash with sessions that already
+        // existed, so any .clash-group naming one of these ids is, by
+        // construction, a newly-relevant conflict this load — reusing the
+        // clash pairs already computed server-side, never recomputed here.
+        const animatedGroups = new Set<Element>();
+        for (const id of addedIds) {
+          const groups = document.querySelectorAll(
+            `.clash-group[data-session-a="${id}"], .clash-group[data-session-b="${id}"]`,
+          );
+          for (const group of Array.from(groups)) {
+            if (!animatedGroups.has(group)) {
+              animatedGroups.add(group);
+              entranceIn(group);
+            }
+            const a = group.getAttribute("data-session-a");
+            const b = group.getAttribute("data-session-b");
+            const otherId = a === String(id) ? b : a;
+            if (otherId) {
+              emphasizeOnce(document.querySelector(`.grid-session[data-session-id="${otherId}"]`));
+            }
+          }
+        }
+      })();
+
+      // Newly-selected course card in My Courses.
+      (function selectedCourseEntrance() {
+        if (!selectedOfferingId) return;
+        const card = document.querySelector(`.my-courses-card .course-card[data-offering-id="${selectedOfferingId}"]`);
+        if (card) entranceIn(card);
+      })();
+
+      // Exit-before-submit for Remove (session) and Keep both: neither the
+      // deletion nor the acknowledgement changes here — the exact same
+      // form, action and server route run as before. This only delays the
+      // real submit by one short tween so the departing card/group is
+      // visibly seen leaving; it never fakes removal by hiding without
+      // submitting, and under reduced motion it submits immediately.
+      document.addEventListener("submit", (event) => {
+        const form = event.target;
+        if (!(form instanceof HTMLFormElement)) return;
+
+        const deleteMatch = form.action.match(/\/api\/sessions\/(\d+)\/delete\/?$/);
+        if (deleteMatch) {
+          event.preventDefault();
+          const card = document.querySelector(`.grid-session[data-session-id="${deleteMatch[1]}"]`);
+          exitOut(card).then(() => form.submit());
+          return;
+        }
+
+        if (form.classList.contains("clash-group-actions")) {
+          event.preventDefault();
+          exitOut(form.closest(".clash-group")).then(() => form.submit());
+        }
+      });
+
+      // Progressive enhancement only: every overlapping session is already
+      // rendered server-side inside each conflicted card's .clash-popover
+      // (from the same clash data as the ⚠ indicator) — this script just
+      // shows/hides and positions it. It never computes overlaps itself.
+      const cards = Array.from(document.querySelectorAll<HTMLElement>(".grid-session.clashing"));
+      const hoverCapable = window.matchMedia("(hover: hover) and (pointer: fine)").matches;
+
+      interface CardState {
+        toggle: HTMLElement;
+        popover: HTMLElement;
+        hovered: boolean;
+        focused: boolean;
+        pinned: boolean;
+        wasOpen: boolean;
+      }
+
+      const states = new Map<HTMLElement, CardState>();
+
+      function clamp(value: number, min: number, max: number): number {
+        return Math.min(Math.max(value, min), max);
+      }
+
+      // Fixed positioning (set here, not in CSS) escapes the timetable's
+      // scroll container so the popover is never clipped by it, and is
+      // clamped back inside the viewport so it stays fully readable.
+      function position(card: HTMLElement, popover: HTMLElement): void {
+        const margin = 8;
+        const rect = card.getBoundingClientRect();
+        const popRect = popover.getBoundingClientRect();
+        const maxLeft = Math.max(margin, window.innerWidth - popRect.width - margin);
+        let top = rect.bottom + margin;
+        if (top + popRect.height > window.innerHeight - margin) {
+          const above = rect.top - popRect.height - margin;
+          top = above > margin ? above : margin;
+        }
+        popover.style.left = `${clamp(rect.left, margin, maxLeft)}px`;
+        popover.style.top = `${top}px`;
+      }
+
+      function sync(card: HTMLElement): void {
+        const state = states.get(card);
+        if (!state) return;
+        const open = state.hovered || state.focused || state.pinned;
+        state.toggle.setAttribute("aria-expanded", String(open));
+        if (open === state.wasOpen) {
+          if (open) position(card, state.popover);
+          return;
+        }
+        state.wasOpen = open;
+        bringToFront(card, open);
+        if (open) {
+          state.popover.hidden = false;
+          position(card, state.popover);
+          popoverIn(state.popover);
+        } else {
+          popoverOut(state.popover, () => {
+            state.popover.hidden = true;
+          });
+        }
+      }
+
+      for (const card of cards) {
+        const toggle = card.querySelector<HTMLElement>(".clash-toggle");
+        const popover = card.querySelector<HTMLElement>(".clash-popover");
+        if (!toggle || !popover) continue;
+        states.set(card, { toggle, popover, hovered: false, focused: false, pinned: false, wasOpen: false });
+
+        // Desktop: plain mouse hover reveals it, no click needed.
+        if (hoverCapable) {
+          card.addEventListener("mouseenter", () => {
+            const state = states.get(card);
+            if (state) {
+              state.hovered = true;
+              sync(card);
+            }
+          });
+          card.addEventListener("mouseleave", () => {
+            const state = states.get(card);
+            if (state) {
+              state.hovered = false;
+              sync(card);
+            }
+          });
+        }
+
+        // Keyboard: tabbing to the toggle reveals it, same content as hover.
+        toggle.addEventListener("focus", () => {
+          const state = states.get(card);
+          if (state) {
+            state.focused = true;
+            sync(card);
+          }
+        });
+        toggle.addEventListener("blur", () => {
+          const state = states.get(card);
+          if (state) {
+            state.focused = false;
+            sync(card);
+          }
+        });
+
+        // Mobile (and click-to-pin on desktop): tapping the card toggles it
+        // open, since touch devices have no hover. Only one stays pinned
+        // open at a time.
+        toggle.addEventListener("click", () => {
+          const state = states.get(card);
+          if (!state) return;
+          const next = !state.pinned;
+          for (const [otherCard, otherState] of states) {
+            if (otherCard !== card) {
+              otherState.pinned = false;
+              sync(otherCard);
+            }
+          }
+          state.pinned = next;
+          sync(card);
+        });
+      }
+
+      document.addEventListener("click", (event) => {
+        const target = event.target as Node | null;
+        for (const [card, state] of states) {
+          if (state.pinned && target && !card.contains(target)) {
+            state.pinned = false;
+            sync(card);
+          }
+        }
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.key !== "Escape") return;
+        const active = document.activeElement;
+        if (active instanceof HTMLElement && active.classList.contains("clash-toggle")) {
+          active.blur();
+        }
+        for (const [card, state] of states) {
+          if (state.pinned) {
+            state.pinned = false;
+            sync(card);
+          }
+        }
+      });
+
+      function repositionOpen(): void {
+        for (const [card, state] of states) {
+          if (!state.popover.hidden) position(card, state.popover);
+        }
+      }
+
+      window.addEventListener("resize", repositionOpen);
+      window.addEventListener("scroll", repositionOpen, true);
+    </script>
   </body>
 </html>

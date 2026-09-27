@@ -35,8 +35,11 @@ function courseCardHtml(html: string, offeringId: number): string {
   const marker = `/api/courses/${offeringId}/add-all`;
   const markerIndex = html.indexOf(marker);
   if (markerIndex === -1) throw new Error(`course card for offering ${offeringId} not found in "My Courses"`);
-  const cardStart = html.lastIndexOf('<div class="card course-card">', markerIndex);
-  const nextCardStart = html.indexOf('<div class="card course-card">', cardStart + 1);
+  // Matches the opening tag regardless of trailing attributes (e.g. the
+  // motion layer's `data-offering-id`), rather than an exact literal string.
+  const cardOpenTag = '<div class="card course-card"';
+  const cardStart = html.lastIndexOf(cardOpenTag, markerIndex);
+  const nextCardStart = html.indexOf(cardOpenTag, cardStart + 1);
   return html.slice(cardStart, nextCardStart === -1 ? html.length : nextCardStart);
 }
 
@@ -65,8 +68,12 @@ function bannerHtml(html: string): string {
 function clashGroupHtml(html: string, containing: string): string {
   const markerIndex = html.indexOf(containing);
   if (markerIndex === -1) throw new Error(`no clash-group mentions "${containing}"`);
-  const groupStart = html.lastIndexOf('<div class="clash-group">', markerIndex);
-  const nextGroupStart = html.indexOf('<div class="clash-group">', groupStart + 1);
+  // Matches the opening tag regardless of trailing attributes (e.g. the
+  // motion layer's `data-session-a`/`data-session-b`), rather than an exact
+  // literal string.
+  const groupOpenTag = '<div class="clash-group"';
+  const groupStart = html.lastIndexOf(groupOpenTag, markerIndex);
+  const nextGroupStart = html.indexOf(groupOpenTag, groupStart + 1);
   return html.slice(groupStart, nextGroupStart === -1 ? html.length : nextGroupStart);
 }
 
@@ -107,7 +114,16 @@ describe("add all sessions for a course", () => {
 
     const addAll = await post(`/api/courses/${COMP3600_OFFERING}/add-all`, undefined);
     expect(addAll.status).toBe(303);
-    expect(addAll.headers.get("location")).toBe("/");
+    const addAllLocation = addAll.headers.get("location") ?? "";
+    expect(addAllLocation.startsWith("/?added=")).toBe(true);
+    // The `added` hint names the 3 newly-created *persisted* session ids
+    // (distinct from the catalogue's class_session ids above) — purely a
+    // presentational hint for the client-side motion layer, so this only
+    // checks it names exactly the 3 sessions this call actually created.
+    const addedIds = new URL(addAllLocation, baseUrl).searchParams.get("added")?.split(",") ?? [];
+    expect(addedIds).toHaveLength(3);
+    expect(new Set(addedIds).size).toBe(3);
+    expect(addedIds.every((id) => /^\d+$/.test(id))).toBe(true);
 
     html = await getPage();
     cardA = courseCardHtml(html, COMP3600_OFFERING);

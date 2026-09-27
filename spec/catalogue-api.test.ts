@@ -44,7 +44,9 @@ describe("course browsing and selection", () => {
   it("select -> add a session -> remove course: the course and its session both disappear together", async () => {
     const select = await post("/api/courses/select", new URLSearchParams({ offering_id: String(OFFERING_ID) }));
     expect(select.status).toBe(303);
-    expect(select.headers.get("location")).toBe("/");
+    const selectLocation = select.headers.get("location") ?? "";
+    expect(selectLocation.startsWith("/")).toBe(true);
+    expect(new URL(selectLocation, baseUrl).searchParams.get("selectedOffering")).toBe(String(OFFERING_ID));
 
     let html = await getPage();
     // Now in "My Courses", offering a "Remove course" action.

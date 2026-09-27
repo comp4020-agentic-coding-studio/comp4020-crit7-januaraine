@@ -43,3 +43,7 @@ deliverable's brief and spec; read them before you plan or build.
 ## Growing this file
 
 Add project-specific conventions here as they're discovered (recurring agent mistakes, curriculum-design decisions encoded as rules, new invariants) — keep entries short and actionable.
+
+### Motion layer (GSAP)
+
+A restrained GSAP motion layer was added on top of the existing full-page-reload architecture — see `src/lib/motion.ts` for the single source of truth for durations/easing/stagger and centralized `prefers-reduced-motion` handling. Animation is presentation-only: it never recomputes clash logic (it reads the already-server-rendered `data-session-a`/`data-session-b`/`data-session-id`/`data-offering-id` attributes) and never changes persistence, routing, or API contracts. The `?added=`/`?selectedOffering=` redirect query hints are non-authoritative UI hints only, stripped via `history.replaceState` right after being read. Keep new interaction animation centralized in `motion.ts` rather than adding ad-hoc tweens per component.
