@@ -309,5 +309,69 @@ only one of the two days reporting exactly that day's session in
 checkbox markup) and confirmed the existing C7 create->clash->resolve->reload
 test still passes unmodified.
 
+Eleventh increment: investigated a reported bug in the clash flow — after
+POSTing a session that overlapped an existing one (a normal 303, then a
+normal 200 on the follow-up `GET /`, per the dev-server log), the browser
+became stuck/blank, and the dev server later logged
+`[LIFECYCLE] Command failed with exit code 143`, needing a manual restart.
+The brief was explicit not to assume the clash logic was at fault, so I
+worked from first principles rather than patching `sessions.ts`/`clashes.ts`
+on a guess.
+
+I re-read every file in the clash path (`src/pages/api/sessions.ts`,
+`src/pages/index.astro`, `src/lib/clashes.ts`, `src/lib/db.ts`,
+`spec/clashes.test.ts`, `spec/sessions-api.test.ts`, `spec/crit-7.test.ts`)
+looking specifically for infinite loops, recursive rendering, malformed
+query-string handling, and database-locking/stale-data issues, and found
+none — `findClashes`/`sessionsClash` are a plain `.filter`/interval
+comparison, `index.astro`'s `added`/`clashDetail` parsing is a bounded
+`split`/`map` with no re-entrancy, and the inline `<script>` has no timers
+or observers. I then reproduced the exact reported sequence three ways: a
+single-clash and a multi-clash create over `curl` with `redirect: "manual"`
+followed by actually fetching the resulting `Location` (not just inspecting
+the header), and the same multi-clash URL loaded in a real headless
+Chromium tab. All three completed in well under a second with zero console
+or page errors and correct HTML — the clash-rendering path itself does not
+hang.
+
+Root cause: it isn't in this repo. `.astro/dev.json`/`.astro/dev.log` show
+this project's `astro dev` (v7.3.3) auto-starts as a **detached background
+daemon** whenever it detects it's being run by an agent
+(`node_modules/astro/dist/cli/dev/index.js`:
+`wantsBackground = !!flags.background || agentDetected && !ignoreLock`) —
+confirmed by `.astro/dev.json` recording `"background": true` and a `pid`
+with no parent shell, plus `astro dev status`/`stop`/`logs` subcommands for
+managing it across turns. That daemon is intentionally decoupled from
+whatever shell started it, so it can be, and was, terminated by something
+outside the request path (external process-lifecycle management — hence
+`[LIFECYCLE] ... exit code 143`, SIGTERM, found nowhere in this repo's or
+Astro's own source) with no relationship to which page was open. A browser
+mid-request to a server process that vanishes will sit stuck/blank until it
+times out, regardless of what page it was loading — the timing next to a
+just-added clash was coincidental, not causal. The dev-server log for the
+session in question shows nothing but fast, successful `303`/`200`
+responses right up to that point.
+
+Fix: none of `sessions.ts`/`clashes.ts`/`index.astro`/`db.ts` needed a code
+change — there was no defect to fix there, and inventing one would violate
+the "smallest possible change" and "don't assume the clash logic" brief.
+What the investigation did surface, and what I did change, is a real,
+independent test-coverage gap: every existing clash test
+(`spec/sessions-api.test.ts`, `spec/crit-7.test.ts`) stops at inspecting the
+303's `Location` header and never actually follows it to render the
+resulting page — the one hop a real browser depends on, and the one thing
+none of the 43 prior tests exercised. Added
+"GET / after a clash redirect" to `spec/sessions-api.test.ts`: create two
+overlapping sessions, follow the real `Location` redirect with `fetch`, and
+assert a `200` whose body contains the clash banner naming both course
+codes. This is a regression test for that specific gap, not a reproduction
+of the reported hang (which isn't reproducible in application code).
+
+Verified: `pnpm check` — 0 typecheck errors, 44 passed / 0 failed (43 plus
+the new test). Manually re-confirmed against the running dev server: a
+non-clashing create still returns a clean `303`, a clashing create still
+reports it, the resulting clash page still loads in ~20ms, deleting either
+side of the clash still works, and a fresh `GET /` still returns `200`.
+
 I'll keep extending this section, and citing the commits that carry each
 step, as the build continues through the week.

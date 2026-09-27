@@ -170,6 +170,40 @@ describe("POST /api/sessions with multiple days", () => {
   });
 });
 
+describe("GET / after a clash redirect", () => {
+  it("actually renders the clash banner instead of just exposing it in the Location header", async () => {
+    // Every other clash test in this file (and spec/crit-7.test.ts) stops at
+    // inspecting the redirect's Location header — none of them follow it and
+    // render the resulting page the way a browser actually would. This is
+    // that missing hop: it exercises index.astro's `added`/`clashDetail`
+    // query-string parsing and clash-banner render path for real.
+    const courseCode = `RENDER${process.hrtime.bigint()}`;
+    const a = await post(
+      "/api/sessions",
+      session({ course_code: courseCode, day_of_week: "4", start_minutes: "540" }),
+    );
+    const aId = addedIdFrom(a);
+
+    const bCourseCode = `${courseCode}B`;
+    const b = await post(
+      "/api/sessions",
+      session({ course_code: bCourseCode, day_of_week: "4", start_minutes: "570", end_minutes: "630" }),
+    );
+    expect(clashesWithFrom(b)).toEqual([aId]);
+
+    const location = b.headers.get("location");
+    if (!location) throw new Error("expected a redirect with a Location header");
+
+    const page = await fetch(new URL(location, baseUrl));
+    expect(page.status).toBe(200);
+
+    const html = await page.text();
+    expect(html).toContain("Clash detected");
+    expect(html).toContain(courseCode);
+    expect(html).toContain(bCourseCode);
+  });
+});
+
 describe("POST /api/sessions/:id/delete", () => {
   it("removes the session, so it no longer counts towards future clashes", async () => {
     const a = await post("/api/sessions", session({ day_of_week: "3", start_minutes: "540" }));
