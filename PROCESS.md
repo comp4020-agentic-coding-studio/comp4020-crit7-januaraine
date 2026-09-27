@@ -48,3 +48,18 @@ I built a timetable clash flow that detects overlapping sessions, keeps the conf
 
 4. **the citation**: 
    [`c027e88`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-Januaraine/commit/c027e88)
+
+
+### Moment 4: Retiring manual entry for a small, honestly-labelled course catalogue
+
+1. **what happened**: 
+   With the clash/acknowledgement mechanism solid, the remaining gap wasn't a bug — it was that the whole product still read as "type arbitrary text into a form that happens to detect overlaps," not as a slice of ANU timetabling. `docs/mvp-plan.md`'s own non-goal list had ruled out a course catalogue when the priority was proving the mechanism cheaply; that tradeoff no longer held once the mechanism was proven.
+
+2. **what you did instead of the obvious thing**: 
+   The obvious move would have been to bolt a course picker on *next to* the existing free-text fields, keeping both paths working. Instead I retired manual entry outright: `POST /api/sessions` now takes a single `class_session_id` looked up against a small seeded catalogue (`src/lib/catalogue-seed.ts`) of real, public ANU course codes/titles/units, with manually curated (and clearly documented as such) session day/time/activity/location data — no scraper, per this deliverable's own non-goal list. `sessions` and `clash_acknowledgements` kept every existing column and function signature; the new `courses` / `course_offerings` / `class_sessions` / `selected_offerings` tables are purely additive, and `class_sessions` is shaped identically to the existing clash-interval fields so `src/lib/clashes.ts` needed zero changes. `index.astro`'s information hierarchy was reordered around this: timetable and conflict status first, the new weekly grid second, course browsing/selection last.
+
+3. **how you knew it was right**: 
+   Every HTTP-level spec file that used to generate unique free-text course codes per test now instead reserves specific, non-overlapping catalogue sessions (documented at the top of each file), since duplicate-adding a real catalogue session for a clash fixture produces textually identical rows — tests anchor on each session's own delete-form action id instead of on course-code text. A new `spec/db-catalogue.test.ts` proves `removeSelectedOffering` cascades through both a course's sessions and any acknowledgement referencing them, while leaving an unrelated selected course untouched. `pnpm check` finished with 0 typecheck errors and the full suite passing.
+
+4. **the citation**: 
+   [`b34ac05`](https://github.com/comp4020-agentic-coding-studio/comp4020-crit7-januaraine/commit/b34ac05854f8b7cef35c10c57149a2feb94e42d2)

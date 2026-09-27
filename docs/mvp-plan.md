@@ -27,6 +27,64 @@ stops nagging in the top alert but stays visibly flagged, since the
 overlap is still real. It's a plan update only — see section D for the new
 persistence model, section H for the (not-yet-done) implementation steps.
 
+## Revision — 2026-09-28: a course catalogue replaces manual entry
+
+The non-goal in section B ("No real ANU course catalog") made sense when the
+MVP's whole point was proving the clash/acknowledgement mechanism cheaply.
+Once that mechanism was solid, the tradeoff flipped: a student who has to
+*type* `"COMP4020"` into a text box, pick a day from a `<select>`, and hand-key
+a start/end time isn't using a timetabling tool — they're filling in a form
+that happens to detect overlaps. The clash-resolution core stays exactly as
+designed (section D/E's schema and rules are untouched by this revision); what
+changes is *where a session's course/activity/day/time come from*. This
+implements section H items 11–18's spirit for a different feature: schema
+first, additive, `src/lib/clashes.ts`/`src/lib/acknowledgements.ts` never
+touched.
+
+Four new tables, additive (`sessions` and `clash_acknowledgements` keep every
+existing column and function signature):
+
+```
+courses            id pk, code text unique, title text, units int
+course_offerings   id pk, course_id -> courses.id, year int, semester int
+class_sessions     id pk, offering_id -> course_offerings.id, activity text,
+                   day_of_week int, start_minutes int, end_minutes int,
+                   location text nullable
+selected_offerings offering_id pk -> course_offerings.id on delete cascade,
+                   selected_at text  -- "My Courses" membership
+```
+
+`sessions` gains one nullable column, `class_session_id -> class_sessions(id)
+on delete set null` — the link from "a session on my timetable" back to
+"which catalogue offering it came from." `class_sessions` is deliberately
+shaped like the existing clash-interval fields (`day_of_week`/
+`start_minutes`/`end_minutes`) so `sessionsClash`/`findClashes`/
+`findAllClashes` need zero changes to work with catalogue-sourced sessions.
+
+The catalogue itself (`src/lib/catalogue-seed.ts`) is a small, explicitly
+labelled seed: 7 real, public ANU course codes/titles/unit values (COMP1100,
+COMP1130, COMP2100, COMP2310, COMP3600, COMP3620, COMP4020), each with 2–3
+class sessions. **The course codes, titles, and unit values are real ANU
+data; the session day/time/activity/location values are manually curated for
+this demo, not scraped or sourced from a live timetable feed** — no scraper
+was built, per this deliverable's own non-goal list, and the distinction is
+documented plainly in `README.md` so the seed is never mistaken for a live
+feed. Seeding is idempotent (insert-if-empty on `courses`) and runs at boot
+alongside `migrate()`, the same way the schema migration itself "just works"
+on a fresh database.
+
+`POST /api/sessions`'s contract changes from five free-text fields to a
+single `class_session_id`: the server looks it up, 400s if unknown, and then
+does exactly what it already did — validate, insert, compute clashes,
+redirect with `added`/`clashesWith`/`clashDetail`. This is the one
+intentional break from "no unrequested API changes": manual entry is
+retired, not layered alongside the catalogue, so there is exactly one way to
+add a session and it can't drift out of sync with what's actually browsable.
+`index.astro`'s information hierarchy is reordered to match: timetable and
+conflict status first, the new weekly grid second, "My Courses" and course
+browsing (search → select → pick a session) last — selection is how a
+session gets onto the timetable, not the page's opening move.
+
 ## A. Product definition
 
 **Timetable Clash Resolver** — a single-student tool for building a
