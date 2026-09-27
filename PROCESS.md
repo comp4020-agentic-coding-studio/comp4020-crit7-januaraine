@@ -269,5 +269,45 @@ against `/api/sessions` by hand (a session created at 08:30-09:00 persisted
 and then disappeared cleanly on delete), confirming the new controls don't
 affect the existing create/clash/remove/reload flow.
 
+Tenth increment: replaced the single-day `<select>` with a multi-day
+checkbox group (Mon-Fri), so one submission can create the same course
+session on several weekdays at once, per a follow-up request. The schema
+and clash algorithm are untouched — `src/pages/api/sessions.ts` now reads
+`form.getAll("day_of_week")` (a checkbox group posts the same field name
+once per checked box) instead of a single value, validates every value is
+an integer in range and that at least one was sent, dedupes/sorts the days,
+and calls the existing `addSession()` once per day — so "Monday +
+Wednesday" becomes two ordinary rows, never a new multi-day concept, and
+`findClashes()` keeps comparing one day against one day exactly as before.
+Because each created session is checked against the pre-submission
+snapshot of existing sessions, and sessions created in the same submission
+can never clash with each other (different days), a single snapshot is
+still enough — no re-fetch between inserts. The redirect's query string
+changed to carry the outcome for possibly several created sessions:
+`added` is now a comma-separated list of ids (still just one id, un-commaed,
+for a single-day submission, so the C7 integration test and the existing
+sessions-api tests needed no changes there), `clashesWith` keeps its old
+meaning (every existing session any of the new ones overlaps) for backward
+compatibility, and a new `clashDetail` param
+(`"<createdId>:<clashId1>,<clashId2>;<createdId2>:<clashId3>"`) lets
+`src/pages/index.astro` report the actual conflicting day/session per
+created session rather than one flat list — so a Monday+Wednesday
+submission that only clashes on Wednesday shows just the Wednesday side in
+the clash banner, grouped under its own heading, with Monday reported as
+clean. The day checkboxes reuse the same fieldset+legend pattern as the
+time pickers; since HTML has no native "at least one checkbox checked"
+constraint, the inline `<script>` adds one client-side check (via
+`setCustomValidity`/`reportValidity`) purely as a UX convenience — with JS
+disabled a zero-day POST still reaches the server and gets the same 400 any
+other invalid field already gets. Added tests to `spec/sessions-api.test.ts`
+covering: rejecting a submission with no day selected, a two-day submission
+persisting as two distinct rows, and a two-day submission that clashes on
+only one of the two days reporting exactly that day's session in
+`clashDetail` (not the other, unrelated day). Verified with `pnpm check`
+(0 typecheck errors, 43/43 tests passing, including
+`spec/invariants.test.ts`'s axe/accessible-name checks against the new
+checkbox markup) and confirmed the existing C7 create->clash->resolve->reload
+test still passes unmodified.
+
 I'll keep extending this section, and citing the commits that carry each
 step, as the build continues through the week.

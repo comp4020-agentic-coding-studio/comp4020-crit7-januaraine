@@ -30,6 +30,27 @@ const clashesWithFrom = (res: Response): string[] => {
   return raw ? raw.split(",") : [];
 };
 
+const addedIdsFrom = (res: Response): string[] => {
+  const location = res.headers.get("location");
+  if (!location) throw new Error("expected a redirect with a Location header");
+  const raw = new URL(location, baseUrl).searchParams.get("added");
+  return raw ? raw.split(",") : [];
+};
+
+// clashDetail entries look like "<createdId>:<clashId1>,<clashId2>", joined
+// by ";" — one entry per created session that actually clashed.
+const clashDetailFrom = (res: Response): Record<string, string[]> => {
+  const location = res.headers.get("location");
+  if (!location) throw new Error("expected a redirect with a Location header");
+  const raw = new URL(location, baseUrl).searchParams.get("clashDetail") ?? "";
+  const detail: Record<string, string[]> = {};
+  for (const entry of raw.split(";").filter(Boolean)) {
+    const [id, clashes] = entry.split(":");
+    detail[id] = clashes.split(",");
+  }
+  return detail;
+};
+
 const session = (overrides: Record<string, string> = {}) =>
   new URLSearchParams({
     course_code: "COMP4020",
@@ -39,6 +60,15 @@ const session = (overrides: Record<string, string> = {}) =>
     end_minutes: "600",
     ...overrides,
   });
+
+// URLSearchParams can carry the same key more than once, matching how a
+// browser encodes several checked checkboxes that share one `name`.
+const multiDaySession = (days: string[], overrides: Record<string, string> = {}) => {
+  const params = session(overrides);
+  params.delete("day_of_week");
+  for (const day of days) params.append("day_of_week", day);
+  return params;
+};
 
 describe("POST /api/sessions", () => {
   it("creates a session with no clash and redirects with its id", async () => {
@@ -75,6 +105,68 @@ describe("POST /api/sessions", () => {
       session({ start_minutes: "600", end_minutes: "600" }),
     );
     expect(res.status).toBe(400);
+  });
+
+  it("rejects a submission with no day selected", async () => {
+    const res = await post("/api/sessions", multiDaySession([]));
+    expect(res.status).toBe(400);
+  });
+});
+
+describe("POST /api/sessions with multiple days", () => {
+  it("creates one persisted session per selected day", async () => {
+    const courseCode = `MULTI${process.hrtime.bigint()}`;
+    const res = await post(
+      "/api/sessions",
+      multiDaySession(["0", "2"], { course_code: courseCode, start_minutes: "810", end_minutes: "870" }),
+    );
+    expect(res.status).toBe(303);
+    const ids = addedIdsFrom(res);
+    expect(ids).toHaveLength(2);
+    expect(clashesWithFrom(res)).toEqual([]);
+
+    const html = await (await fetch(baseUrl)).text();
+    // Two distinct persisted rows (one under the Monday group, one under
+    // Wednesday), not a single row tagged with two days — the session-meta
+    // text for this exact course code appears exactly twice.
+    const meta = `${courseCode} Lecture (13:30–14:30)`;
+    const occurrences = html.split(meta).length - 1;
+    expect(occurrences).toBe(2);
+  });
+
+  it("reports the actual conflicting day/session when only one selected day clashes", async () => {
+    // A distinctive, unique-per-run time window so this test can't be
+    // confused by any other test's (or prior run's) leftover rows in the
+    // shared throwaway database.
+    const courseCode = `MULTICLASH${process.hrtime.bigint()}`;
+    const startMinutes = "900";
+    const endMinutes = "960";
+
+    // Existing session on Wednesday only, matching the time window below.
+    const existing = await post(
+      "/api/sessions",
+      session({ course_code: courseCode, day_of_week: "2", start_minutes: startMinutes, end_minutes: endMinutes }),
+    );
+    const existingId = addedIdsFrom(existing)[0];
+
+    // New submission picks Monday + Wednesday for the same time window —
+    // only the Wednesday copy should clash, not the Monday one.
+    const res = await post(
+      "/api/sessions",
+      multiDaySession(["0", "2"], { start_minutes: startMinutes, end_minutes: endMinutes }),
+    );
+    expect(res.status).toBe(303);
+
+    const ids = addedIdsFrom(res);
+    expect(ids).toHaveLength(2);
+    expect(clashesWithFrom(res)).toEqual([existingId]);
+
+    const detail = clashDetailFrom(res);
+    // Exactly one of the two created sessions clashed (the Wednesday one),
+    // and it clashed with exactly the pre-existing Wednesday session.
+    const clashedIds = Object.keys(detail);
+    expect(clashedIds).toHaveLength(1);
+    expect(detail[clashedIds[0]]).toEqual([existingId]);
   });
 });
 

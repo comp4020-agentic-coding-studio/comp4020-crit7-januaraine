@@ -24,6 +24,25 @@ function badRequest(message: string): Response {
   return new Response(message, { status: 400 });
 }
 
+// One submission of the form can name more than one weekday (a checkbox
+// group, not a single <select>): "day_of_week" may appear several times in
+// the FormData. Each valid day becomes its own persisted row — the schema
+// and findClashes() stay one-row-per-day, so a Monday+Wednesday lecture is
+// just two ordinary sessions, never a new "multi-day session" concept.
+function requiredDays(form: FormData): number[] | null {
+  const raw = form.getAll("day_of_week");
+  if (raw.length === 0) return null;
+
+  const days: number[] = [];
+  for (const value of raw) {
+    if (typeof value !== "string") return null;
+    const day = Number(value);
+    if (!Number.isInteger(day) || day < MIN_DAY || day > MAX_DAY) return null;
+    days.push(day);
+  }
+  return [...new Set(days)].sort((a, b) => a - b);
+}
+
 // The write half of the timetable flow: a plain HTML form (once the UI
 // exists) POSTs here, the session is validated and saved, and every
 // existing session it clashes with is reported back so the UI can render a
@@ -39,9 +58,9 @@ export const POST: APIRoute = async ({ request, redirect }) => {
   const activity = requiredString(form, "activity", 40);
   if (activity === null) return badRequest("activity is required");
 
-  const dayOfWeek = requiredInt(form, "day_of_week");
-  if (dayOfWeek === null || dayOfWeek < MIN_DAY || dayOfWeek > MAX_DAY) {
-    return badRequest(`day_of_week must be an integer between ${MIN_DAY} and ${MAX_DAY}`);
+  const days = requiredDays(form);
+  if (days === null) {
+    return badRequest(`at least one day_of_week is required, each an integer between ${MIN_DAY} and ${MAX_DAY}`);
   }
 
   const startMinutes = requiredInt(form, "start_minutes");
@@ -58,14 +77,31 @@ export const POST: APIRoute = async ({ request, redirect }) => {
     return badRequest("end_minutes must be greater than start_minutes");
   }
 
-  // Snapshot before inserting so the new session never clashes with itself.
+  // Snapshot before inserting so a new session never clashes with itself —
+  // and since every day in `days` is distinct, sessions created in this same
+  // submission never clash with each other either (findClashes requires a
+  // matching dayOfWeek), so comparing only against this one snapshot is enough.
   const existing = listSessions();
-  const created = addSession({ courseCode, activity, dayOfWeek, startMinutes, endMinutes });
-  const clashes = findClashes(created, existing);
+  const created = days.map((dayOfWeek) => addSession({ courseCode, activity, dayOfWeek, startMinutes, endMinutes }));
 
-  const params = new URLSearchParams({ added: String(created.id) });
-  if (clashes.length > 0) {
-    params.set("clashesWith", clashes.map((session) => String(session.id)).join(","));
+  const clashesByCreatedId = new Map<number, number[]>();
+  for (const session of created) {
+    const clashes = findClashes(session, existing);
+    if (clashes.length > 0) {
+      clashesByCreatedId.set(session.id, clashes.map((s) => s.id));
+    }
+  }
+
+  const params = new URLSearchParams({ added: created.map((s) => String(s.id)).join(",") });
+  const allClashIds = [...new Set([...clashesByCreatedId.values()].flat())];
+  if (allClashIds.length > 0) {
+    params.set("clashesWith", allClashIds.map(String).join(","));
+    // Per-created-session detail so the UI can report exactly which day's
+    // session clashed with what, rather than one flat list across all days.
+    params.set(
+      "clashDetail",
+      [...clashesByCreatedId.entries()].map(([id, clashIds]) => `${id}:${clashIds.join(",")}`).join(";"),
+    );
   }
   return redirect(`/?${params.toString()}`, 303);
 };
