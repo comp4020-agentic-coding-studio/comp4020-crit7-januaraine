@@ -198,7 +198,7 @@ describe("GET / after a clash redirect", () => {
     expect(page.status).toBe(200);
 
     const html = await page.text();
-    expect(html).toContain("Clash detected");
+    expect(html).toContain("Unresolved schedule conflicts");
     expect(html).toContain(courseCode);
     expect(html).toContain(bCourseCode);
   });

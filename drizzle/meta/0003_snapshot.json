@@ -1,0 +1,150 @@
+{
+  "version": "6",
+  "dialect": "sqlite",
+  "id": "7eb6e09e-715a-480a-8185-948b18a1399c",
+  "prevId": "d661f9e1-b029-4272-b9f7-4902840462b7",
+  "tables": {
+    "clash_acknowledgements": {
+      "name": "clash_acknowledgements",
+      "columns": {
+        "session_a_id": {
+          "name": "session_a_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "session_b_id": {
+          "name": "session_b_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "acknowledged_at": {
+          "name": "acknowledged_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(datetime('now'))"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "clash_acknowledgements_session_a_id_sessions_id_fk": {
+          "name": "clash_acknowledgements_session_a_id_sessions_id_fk",
+          "tableFrom": "clash_acknowledgements",
+          "tableTo": "sessions",
+          "columnsFrom": [
+            "session_a_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        },
+        "clash_acknowledgements_session_b_id_sessions_id_fk": {
+          "name": "clash_acknowledgements_session_b_id_sessions_id_fk",
+          "tableFrom": "clash_acknowledgements",
+          "tableTo": "sessions",
+          "columnsFrom": [
+            "session_b_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "cascade",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {
+        "clash_acknowledgements_session_a_id_session_b_id_pk": {
+          "columns": [
+            "session_a_id",
+            "session_b_id"
+          ],
+          "name": "clash_acknowledgements_session_a_id_session_b_id_pk"
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraints": {
+        "session_pair_order": {
+          "name": "session_pair_order",
+          "value": "\"clash_acknowledgements\".\"session_a_id\" < \"clash_acknowledgements\".\"session_b_id\""
+        }
+      }
+    },
+    "sessions": {
+      "name": "sessions",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "course_code": {
+          "name": "course_code",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "activity": {
+          "name": "activity",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "day_of_week": {
+          "name": "day_of_week",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "start_minutes": {
+          "name": "start_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "end_minutes": {
+          "name": "end_minutes",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "created_at": {
+          "name": "created_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(datetime('now'))"
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    }
+  },
+  "views": {},
+  "enums": {},
+  "_meta": {
+    "schemas": {},
+    "tables": {},
+    "columns": {}
+  },
+  "internal": {
+    "indexes": {}
+  }
+}

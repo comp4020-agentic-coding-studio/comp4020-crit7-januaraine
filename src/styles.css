@@ -314,6 +314,17 @@ select:focus-visible {
   background: var(--color-danger-bg);
 }
 
+.btn-secondary {
+  background: transparent;
+  color: var(--color-text);
+  border-color: var(--color-border);
+}
+
+.btn-secondary:hover {
+  background: var(--color-surface);
+  border-color: var(--color-text-muted);
+}
+
 .inline-form {
   display: inline-flex;
   margin: 0;
@@ -364,7 +375,16 @@ select:focus-visible {
   padding: 0.6rem 0.8rem;
 }
 
+.clash-group-actions {
+  margin-block-start: var(--space-2);
+}
+
 /* Timetable */
+
+.clash-indicator {
+  color: var(--color-danger);
+  margin-inline-end: 0.3rem;
+}
 
 .timetable-groups {
   display: flex;

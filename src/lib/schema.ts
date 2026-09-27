@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { int, sqliteTable, text } from "drizzle-orm/sqlite-core";
+import { check, int, primaryKey, sqliteTable, text } from "drizzle-orm/sqlite-core";
 
 // The schema is the ground truth for the database. To change it: edit here,
 // run `pnpm db:generate` to turn the diff into a migration under drizzle/,
@@ -24,3 +24,32 @@ export const sessions = sqliteTable("sessions", {
 });
 
 export type Session = typeof sessions.$inferSelect;
+
+// A student's decision to keep a specific overlapping pair, not a derived
+// fact — whether the pair still clashes is always recomputed from `sessions`
+// (src/lib/clashes.ts); this table only remembers "acknowledged", never
+// "clashing". One row per pair, never per session — see docs/mvp-plan.md
+// section D. `on delete cascade` only takes effect because
+// `foreign_keys = ON` is set in src/lib/db.ts.
+export const clashAcknowledgements = sqliteTable(
+  "clash_acknowledgements",
+  {
+    sessionAId: int("session_a_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    sessionBId: int("session_b_id")
+      .notNull()
+      .references(() => sessions.id, { onDelete: "cascade" }),
+    acknowledgedAt: text("acknowledged_at")
+      .notNull()
+      .default(sql`(datetime('now'))`),
+  },
+  (table) => [
+    primaryKey({ columns: [table.sessionAId, table.sessionBId] }),
+    // Canonical ordering enforced by the database, not just app code — see
+    // docs/mvp-plan.md section D for why this matters beyond a lint rule.
+    check("session_pair_order", sql`${table.sessionAId} < ${table.sessionBId}`),
+  ],
+);
+
+export type ClashAcknowledgement = typeof clashAcknowledgements.$inferSelect;

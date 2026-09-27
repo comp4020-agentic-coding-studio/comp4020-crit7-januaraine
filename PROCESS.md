@@ -415,5 +415,93 @@ that don't clash with each other, confirming both of its clashes are shown
 and the unrelated pair isn't invented. Verified with `pnpm check` — 0
 typecheck errors, 50 passed / 0 failed.
 
+Thirteenth increment: the "acknowledged conflict" feature approved in
+`docs/mvp-plan.md` — a "Keep both" action that lets two clashing sessions be
+kept without either side reporting the clash as unresolved, without ever
+making the underlying clash disappear. Followed the plan's implementation
+order exactly.
+
+Schema: added `clash_acknowledgements` to `src/lib/schema.ts` — a
+`(session_a_id, session_b_id)` composite primary key plus a `CHECK
+(session_a_id < session_b_id)` constraint, so a pair only ever has one
+canonical row regardless of which session a caller names first, and both
+columns `references sessions.id` with `onDelete: "cascade"`. Generated the
+migration with `pnpm db:generate`
+(`drizzle/0003_workable_harry_osborn.sql`). SQLite only honours `ON DELETE
+CASCADE` when the connection has turned on foreign-key enforcement — it's
+off by default and this repo's `src/lib/db.ts` never turned it on — so
+without `client.pragma("foreign_keys = ON")` the cascade in the migration
+would sit there unenforced. Added that pragma alongside the existing
+`journal_mode = WAL` one.
+
+Kept the acknowledgement logic in a new, separate module,
+`src/lib/acknowledgements.ts` (`canonicalPair`, `unacknowledgedPairs`),
+rather than inside `src/lib/clashes.ts` — `findClashes`/`findAllClashes`/
+`sessionsClash` stay exactly what they were: a pure computation of which
+sessions currently overlap, with no notion of "acknowledged" at all.
+Acknowledging a pair never changes whether it clashes; it only changes
+whether that clash still needs the caller's attention, which is a layer on
+top of the clash rule, not a change to it. `src/lib/db.ts` gained
+`getSessionById`, `acknowledgeClash` (canonicalizes the pair, then an
+`onConflictDoNothing` upsert — a duplicate "Keep both" is a no-op, not an
+error), and `listAcknowledgedPairs`.
+
+API: added `POST /api/clashes/acknowledge`, mirroring the existing
+`sessions.ts`/`delete.ts` validation and redirect style. It rejects (400)
+a request naming a session id that doesn't exist, the same session twice,
+missing or non-integer ids, and — the one that matters most — a pair that
+doesn't currently clash: the server re-runs `sessionsClash` itself rather
+than trusting anything the form claims, so there's no way to mark an
+unrelated pair "kept" through this endpoint. On success it re-canonicalizes
+and redirects to `/` with a plain 303, the same no-JS-friendly pattern the
+rest of the app uses.
+
+UI: `src/pages/index.astro` now computes `alertPairs` (via
+`unacknowledgedPairs`) for the top banner, renamed "Clash detected" to
+"Unresolved schedule conflicts" since an acknowledged pair is deliberately
+no longer "detected" there, and each clash-group box gained a "Keep both"
+button posting the pair's two ids as hidden fields. Separately, every
+timetable row for a session that's part of *any* current clash (whether or
+not that clash has been acknowledged) now shows a small ⚠ — computed from
+`findAllClashes` directly, not from `alertPairs` — so the raw clash fact
+never gets hidden from the timetable itself, only from the top-of-page
+alert. There's deliberately no "un-acknowledge" control; the plan didn't
+call for one.
+
+Tests: `spec/acknowledgements.test.ts` covers `canonicalPair`/
+`unacknowledgedPairs` as pure functions. `spec/db-acknowledgements.test.ts`
+talks to `src/lib/db.ts` directly against its own throwaway SQLite file,
+instead of over HTTP like every other spec file — deliberately, because
+AUTOINCREMENT ids are never reused, so a cascade that silently never fired
+(pragma left off) would look identical from outside to one that did; only a
+direct check proves the FK actually deletes the acknowledgement row rather
+than leaving it orphaned. It covers order-independent dedup, cascade-delete
+on either side of a pair, and that deleting one session only removes
+acknowledgements naming it, leaving an unrelated pair's acknowledgement
+intact. `spec/acknowledgements-api.test.ts` drives the endpoint over HTTP:
+all four rejection cases above, then one flow test that creates a clashing
+A/B, acknowledges the pair, confirms the banner drops it while the ⚠ stays
+on both, confirms a duplicate acknowledge is a no-op, creates a C that
+clashes with B only and confirms the banner now shows exactly (B, C) and
+still not (A, B), then deletes A and confirms its acknowledgement is gone
+with it while B and C's own clash and ⚠ markers are unaffected. Every spec
+file in this suite shares one server and one database for the whole run
+(`spec/global-setup.ts`), so this file's fixtures use day 5 (Saturday),
+otherwise unused, to avoid an accidental clash with another file's fixture
+sessions. Updated the one pre-existing assertion on the old "Clash
+detected" banner text (`spec/sessions-api.test.ts`) to match the rename;
+no other existing test needed to change.
+
+Verified: `pnpm check` — 0 typecheck errors/warnings/hints, 9 test files,
+64/64 tests passed. Manually drove the built server end to end: created two
+clashing sessions and confirmed the banner and both ⚠ markers; clicked
+"Keep both" and confirmed the banner emptied while both ⚠ markers stayed;
+added a third session clashing with only one side of the acknowledged pair
+and confirmed the banner reappeared scoped to exactly that new pair, with
+the acknowledged pair still absent from it; deleted one of the acknowledged
+pair's sessions and confirmed it disappeared entirely, the remaining two
+sessions' own clash and ⚠ stayed correct, and no orphaned banner or
+indicator artifacts were left behind.
+
 I'll keep extending this section, and citing the commits that carry each
 step, as the build continues through the week.
