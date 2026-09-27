@@ -1,7 +1,14 @@
 ---
 import { unacknowledgedPairs } from "../lib/acknowledgements";
+import { CATALOGUE_SEMESTER, CATALOGUE_YEAR } from "../lib/catalogue-seed";
 import { findAllClashes } from "../lib/clashes";
-import { listAcknowledgedPairs, listSessions } from "../lib/db";
+import {
+  listAcknowledgedPairs,
+  listClassSessions,
+  listSelectedOfferings,
+  listSessions,
+  searchCourses,
+} from "../lib/db";
 import "../styles.css";
 
 const sessions = listSessions();
@@ -29,6 +36,7 @@ for (const [a, b] of clashPairs) {
 }
 
 const DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+const WEEKDAY_SHORT = ["Mon", "Tue", "Wed", "Thu", "Fri"];
 
 function formatTime(minutes: number): string {
   const h = Math.floor(minutes / 60);
@@ -40,20 +48,31 @@ function describe(session: (typeof sessions)[number]): string {
   return `${session.courseCode} ${session.activity} — ${DAY_NAMES[session.dayOfWeek]} ${formatTime(session.startMinutes)}–${formatTime(session.endMinutes)}`;
 }
 
-// Start/end time is picked as a separate Hour + Minute <select> pair (not one
-// combined "HH:MM" dropdown) restricted to 08-21 and :00/:30 — a native
-// <input type="time">'s min/max/step attributes don't reliably stop a
-// browser's own picker UI from still offering every hour/minute, so discrete
-// option lists are what actually enforce the range.
-const HOUR_OPTIONS = Array.from({ length: 21 - 8 + 1 }, (_, i) => String(8 + i).padStart(2, "0"));
-const MINUTE_OPTIONS = ["00", "30"];
+// The weekly grid only shows Mon-Fri (the catalogue never seeds weekend
+// sessions — see src/lib/catalogue-seed.ts) over 08:00-21:00 in half-hour
+// slots. Grid placement uses plain CSS Grid line numbers (not absolute
+// %-positioning), computed from the same start/end minutes clash detection
+// already uses, so the visual layout and the clash math can never disagree.
+const GRID_START_MINUTES = 480; // 08:00
+const GRID_END_MINUTES = 1260; // 21:00
+const SLOT_MINUTES = 30;
+const HOURS = Array.from({ length: (GRID_END_MINUTES - GRID_START_MINUTES) / 60 }, (_, i) => 8 + i);
 
-// Grouped by day, sorted by start time within each day — listSessions()
-// already returns that order, so grouping is a straight filter, no re-sort.
-const sessionsByDay = DAY_NAMES.map((name, day) => ({
-  name,
-  sessions: sessions.filter((s) => s.dayOfWeek === day),
-})).filter((group) => group.sessions.length > 0);
+// Row 1 is the day-header row, so the first half-hour slot starts at row 2.
+function gridRowStart(minutes: number): number {
+  return Math.round((minutes - GRID_START_MINUTES) / SLOT_MINUTES) + 2;
+}
+
+const weekGridSessions = sessions.filter((s) => s.dayOfWeek >= 0 && s.dayOfWeek <= 4);
+
+const selectedCourses = listSelectedOfferings();
+const selectedOfferingIds = new Set(selectedCourses.map((c) => c.offeringId));
+
+const query = Astro.url.searchParams.get("q") ?? "";
+// Courses already in "My Courses" aren't offered again in the browser below
+// — selecting a course twice is a harmless no-op either way, but hiding it
+// once it's added keeps the two lists from saying the same thing twice.
+const browsableCourses = searchCourses(query).filter((c) => !selectedOfferingIds.has(c.offeringId));
 ---
 
 <!doctype html>
@@ -70,11 +89,16 @@ const sessionsByDay = DAY_NAMES.map((name, day) => ({
     </nav>
     <main>
       <h1>My Timetable</h1>
-      <p class="lede">
-        Add each weekly class session — lecture, tutorial, lab — and this
-        checks it against every session you've already added. An overlap on
-        the same day is flagged straight away; remove one side, or keep both
-        if you've decided the overlap is fine.
+      <p class="lede summary-line">
+        Semester {CATALOGUE_SEMESTER}, {CATALOGUE_YEAR} · {selectedCourses.length}{" "}
+        course{selectedCourses.length === 1 ? "" : "s"} · {sessions.length} session{sessions.length === 1 ? "" : "s"} ·{" "}
+        {alertPairs.length === 0 ? (
+          <span class="status-ok">No unresolved conflicts</span>
+        ) : (
+          <span class="status-bad">
+            {alertPairs.length} unresolved conflict{alertPairs.length === 1 ? "" : "s"}
+          </span>
+        )}
       </p>
 
       {
@@ -116,170 +140,137 @@ const sessionsByDay = DAY_NAMES.map((name, day) => ({
         )
       }
 
-      <section class="card add-session-card">
-        <h2>Add a session</h2>
-        <form method="post" action="/api/sessions" id="add-session-form" class="session-form">
-          <div class="field">
-            <label for="course_code">Course code</label>
-            <input id="course_code" name="course_code" required maxlength="40" placeholder="COMP4020" />
-          </div>
-
-          <div class="field">
-            <label for="activity">Activity</label>
-            <select id="activity" name="activity" required>
-              <option>Lecture</option>
-              <option>Tutorial</option>
-              <option>Lab</option>
-              <option>Seminar</option>
-            </select>
-          </div>
-
-          <fieldset class="field days-field">
-            <legend>Days</legend>
-            <div class="days-inputs">
-              <label class="day-checkbox">
-                <input type="checkbox" name="day_of_week" value="0" />
-                <span>Mon</span>
-              </label>
-              <label class="day-checkbox">
-                <input type="checkbox" name="day_of_week" value="1" />
-                <span>Tue</span>
-              </label>
-              <label class="day-checkbox">
-                <input type="checkbox" name="day_of_week" value="2" />
-                <span>Wed</span>
-              </label>
-              <label class="day-checkbox">
-                <input type="checkbox" name="day_of_week" value="3" />
-                <span>Thu</span>
-              </label>
-              <label class="day-checkbox">
-                <input type="checkbox" name="day_of_week" value="4" />
-                <span>Fri</span>
-              </label>
-            </div>
-          </fieldset>
-
-          <fieldset class="field time-field">
-            <legend>Start time</legend>
-            <div class="time-inputs">
-              <div class="time-part">
-                <label for="start_hour" class="sr-only">Start hour</label>
-                <select id="start_hour" required>
-                  <option value="" disabled selected>HH</option>
-                  {HOUR_OPTIONS.map((h) => <option value={h}>{h}</option>)}
-                </select>
-              </div>
-              <span class="time-sep">:</span>
-              <div class="time-part">
-                <label for="start_minute" class="sr-only">Start minute</label>
-                <select id="start_minute" required>
-                  <option value="" disabled selected>MM</option>
-                  {MINUTE_OPTIONS.map((m) => <option value={m}>{m}</option>)}
-                </select>
+      <section class="card timetable-card">
+        <h2>Weekly timetable</h2>
+        {
+          weekGridSessions.length === 0 ? (
+            <p class="empty-state">No sessions yet — add one from a course below.</p>
+          ) : (
+            <div class="grid-scroll">
+              <p class="grid-scroll-hint" aria-hidden="true">
+                Scroll for more days →
+              </p>
+              <div class="week-grid">
+                <div class="grid-corner" aria-hidden="true" />
+                {WEEKDAY_SHORT.map((name, i) => (
+                  <div class="grid-day-header" style={`grid-column:${i + 2}`}>
+                    {name}
+                  </div>
+                ))}
+                {HOURS.map((hour, i) => (
+                  <div class="grid-hour-label" style={`grid-row:${i * 2 + 2} / span 2`}>
+                    {String(hour).padStart(2, "0")}:00
+                  </div>
+                ))}
+                {weekGridSessions.map((session) => (
+                  <div
+                    class={`grid-session${clashingSessionIds.has(session.id) ? " clashing" : ""}`}
+                    style={`grid-column:${session.dayOfWeek + 2}; grid-row:${gridRowStart(session.startMinutes)} / ${gridRowStart(session.endMinutes)}`}
+                  >
+                    <span class="grid-session-text">
+                      {clashingSessionIds.has(session.id) && (
+                        <span class="clash-indicator" title="Clashes with another session" aria-label="Clashes with another session">
+                          ⚠
+                        </span>
+                      )}
+                      <strong>{session.courseCode}</strong> {session.activity}
+                      <br />
+                      {formatTime(session.startMinutes)}–{formatTime(session.endMinutes)}
+                    </span>
+                    <form method="post" action={`/api/sessions/${session.id}/delete`} class="inline-form grid-session-remove">
+                      <button class="btn btn-danger-outline btn-sm" type="submit">Remove</button>
+                    </form>
+                  </div>
+                ))}
               </div>
             </div>
-          </fieldset>
-
-          <fieldset class="field time-field">
-            <legend>End time</legend>
-            <div class="time-inputs">
-              <div class="time-part">
-                <label for="end_hour" class="sr-only">End hour</label>
-                <select id="end_hour" required>
-                  <option value="" disabled selected>HH</option>
-                  {HOUR_OPTIONS.map((h) => <option value={h}>{h}</option>)}
-                </select>
-              </div>
-              <span class="time-sep">:</span>
-              <div class="time-part">
-                <label for="end_minute" class="sr-only">End minute</label>
-                <select id="end_minute" required>
-                  <option value="" disabled selected>MM</option>
-                  {MINUTE_OPTIONS.map((m) => <option value={m}>{m}</option>)}
-                </select>
-              </div>
-            </div>
-          </fieldset>
-
-          <input type="hidden" name="start_minutes" id="start_minutes" />
-          <input type="hidden" name="end_minutes" id="end_minutes" />
-
-          <div class="form-actions">
-            <button class="btn btn-primary" type="submit">Add session</button>
-          </div>
-        </form>
+          )
+        }
       </section>
 
-      <h2>Your timetable</h2>
-      {
-        sessionsByDay.length === 0 ? (
-          <p class="empty-state">No sessions yet — add one above.</p>
-        ) : (
-          <div class="timetable-groups">
-            {sessionsByDay.map((group) => (
-              <section class="card day-card">
-                <h3>
-                  {group.name} <span class="day-count">{group.sessions.length}</span>
-                </h3>
-                <ul class="session-list">
-                  {group.sessions.map((session) => (
-                    <li class="session-row">
-                      <span class="session-meta">
-                        {clashingSessionIds.has(session.id) && (
-                          <span class="clash-indicator" title="Clashes with another session" aria-label="Clashes with another session">
-                            ⚠
-                          </span>
-                        )}
-                        {session.courseCode} {session.activity} ({formatTime(session.startMinutes)}–{formatTime(session.endMinutes)})
-                      </span>
-                      <form method="post" action={`/api/sessions/${session.id}/delete`} class="inline-form">
-                        <button class="btn btn-danger-outline" type="submit">Remove</button>
+      <section class="card my-courses-card">
+        <h2>My Courses</h2>
+        {
+          selectedCourses.length === 0 ? (
+            <p class="empty-state">You haven't added any courses yet — browse the catalogue below.</p>
+          ) : (
+            <div class="course-list">
+              {selectedCourses.map((course) => {
+                const available = listClassSessions(course.offeringId);
+                return (
+                  <div class="card course-card">
+                    <div class="course-card-header">
+                      <div>
+                        <h3>{course.code}</h3>
+                        <p class="course-title">
+                          {course.title} · {course.units} units
+                        </p>
+                      </div>
+                      <form method="post" action={`/api/courses/${course.offeringId}/remove`} class="inline-form">
+                        <button class="btn btn-danger-outline" type="submit">Remove course</button>
                       </form>
-                    </li>
-                  ))}
-                </ul>
-              </section>
-            ))}
-          </div>
-        )
-      }
-    </main>
-    <script>
-      // The add-session form's time pickers are the friendliest widget for
-      // "start time" / "end time", but the API (src/pages/api/sessions.ts)
-      // takes minutes-since-midnight integers, matching how they're stored
-      // and compared (see src/lib/schema.ts). This converts one to the
-      // other right before submit. Without JS the hidden fields stay empty
-      // and the server rejects the POST with a clear 400 rather than saving
-      // a wrong value.
-      const form = document.querySelector("#add-session-form");
-      const dayInputs = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="day_of_week"]'));
-      form?.addEventListener("submit", (event) => {
-        // A checkbox group has no native "at least one required" the way a
-        // single <select required> does, so this is checked by hand. Without
-        // JS the check never runs and a zero-day POST still reaches the
-        // server, which rejects it with 400 — the same fallback the rest of
-        // this form already relies on.
-        const anyDayChecked = dayInputs.some((input) => input.checked);
-        dayInputs[0]?.setCustomValidity(anyDayChecked ? "" : "Select at least one day.");
-        if (!anyDayChecked) {
-          event.preventDefault();
-          dayInputs[0]?.reportValidity();
-          return;
+                    </div>
+                    <ul class="available-sessions">
+                      {available.map((cs) => {
+                        const alreadyAdded = sessions.some((s) => s.classSessionId === cs.id);
+                        return (
+                          <li class="available-session">
+                            <span class="session-meta">
+                              {cs.activity} — {DAY_NAMES[cs.dayOfWeek]} {formatTime(cs.startMinutes)}–{formatTime(cs.endMinutes)}
+                              {cs.location ? ` · ${cs.location}` : ""}
+                            </span>
+                            <form method="post" action="/api/sessions" class="inline-form">
+                              <input type="hidden" name="class_session_id" value={cs.id} />
+                              <button class="btn btn-primary btn-sm" type="submit" disabled={alreadyAdded}>
+                                {alreadyAdded ? "Added" : "Add"}
+                              </button>
+                            </form>
+                          </li>
+                        );
+                      })}
+                    </ul>
+                  </div>
+                );
+              })}
+            </div>
+          )
         }
+      </section>
 
-        const setMinutes = (hourId: string, minuteId: string, hiddenId: string) => {
-          const hour = document.querySelector<HTMLSelectElement>(hourId)?.value;
-          const minute = document.querySelector<HTMLSelectElement>(minuteId)?.value;
-          const hiddenField = document.querySelector<HTMLInputElement>(hiddenId);
-          if (hour && minute && hiddenField) {
-            hiddenField.value = String(Number(hour) * 60 + Number(minute));
-          }
-        };
-        setMinutes("#start_hour", "#start_minute", "#start_minutes");
-        setMinutes("#end_hour", "#end_minute", "#end_minutes");
-      });
-    </script>
+      <section class="card browse-courses-card">
+        <h2>Browse courses</h2>
+        <p class="lede">
+          A small seeded catalogue of real ANU course codes/titles (Semester {CATALOGUE_SEMESTER}, {CATALOGUE_YEAR}) with
+          manually curated session times — see <a href="/readme/">About</a> for what's real versus curated.
+        </p>
+        <form method="get" action="/" class="course-search-form">
+          <label for="q" class="sr-only">Search courses</label>
+          <input id="q" name="q" type="search" placeholder="Search by code or title…" value={query} />
+          <button class="btn btn-secondary" type="submit">Search</button>
+        </form>
+        {
+          browsableCourses.length === 0 ? (
+            <p class="empty-state">
+              {query ? "No matching courses." : "Every seeded course is already in My Courses."}
+            </p>
+          ) : (
+            <div class="course-grid">
+              {browsableCourses.map((course) => (
+                <div class="card course-card">
+                  <h3>{course.code}</h3>
+                  <p class="course-title">
+                    {course.title} · {course.units} units · Semester {course.semester}, {course.year}
+                  </p>
+                  <form method="post" action="/api/courses/select" class="inline-form">
+                    <input type="hidden" name="offering_id" value={course.offeringId} />
+                    <button class="btn btn-primary" type="submit">Select course</button>
+                  </form>
+                </div>
+              ))}
+            </div>
+          )
+        }
+      </section>
+    </main>
   </body>
 </html>

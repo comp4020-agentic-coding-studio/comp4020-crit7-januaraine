@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { inject } from "vitest";
+import { seedClassSessionId } from "../src/lib/catalogue-seed";
 
 // HTTP-level acceptance criteria for "Keep both" (docs/mvp-plan.md sections
 // D/E/G), drives the running built server the same way spec/crit-7.test.ts
@@ -22,23 +23,21 @@ const addedIdFrom = (res: Response): string => {
   return new URL(location, baseUrl).searchParams.get("added") ?? "";
 };
 
-// Every other spec file's fixtures live on days 0-4 at various times (see
-// spec/sessions-api.test.ts, spec/crit-7.test.ts) — all these tests share
-// one server and one database (spec/global-setup.ts), so this file sticks
-// to day 5 (Saturday, unused elsewhere) to avoid an unrelated fixture
-// accidentally clashing with a session created here.
-const session = (overrides: Record<string, string> = {}) =>
-  new URLSearchParams({
-    course_code: "COMP4020",
-    activity: "Lecture",
-    day_of_week: "5",
-    start_minutes: "60",
-    end_minutes: "120",
-    ...overrides,
-  });
+// Every spec file driving the shared server + database (spec/global-setup.ts)
+// reserves catalogue sessions (src/lib/catalogue-seed.ts) that no other file
+// touches — see spec/sessions-api.test.ts and spec/crit-7.test.ts for their
+// own reservations. This file reserves both of COMP2310's remaining native
+// sessions (its Lecture is spec/sessions-api.test.ts's CLASH_SESSION): the
+// Tutorial, duplicate-added to build a self-contained A/B/C mutual clash, and
+// the Lab, on a different day, as a genuinely non-clashing second fixture.
+const CLASH_SESSION = seedClassSessionId("COMP2310", "Tutorial", 3); // Thu 13:00-14:00
+const OTHER_SESSION = seedClassSessionId("COMP2310", "Lab", 4); // Fri 09:00-11:00
 
-const createSession = async (overrides: Record<string, string> = {}): Promise<string> => {
-  const res = await post("/api/sessions", session(overrides));
+const addFromCatalogue = (classSessionId: number) =>
+  post("/api/sessions", new URLSearchParams({ class_session_id: String(classSessionId) }));
+
+const createSession = async (classSessionId: number): Promise<string> => {
+  const res = await addFromCatalogue(classSessionId);
   expect(res.status).toBe(303);
   const id = addedIdFrom(res);
   expect(id).not.toBe("");
@@ -54,54 +53,60 @@ const getPage = async (): Promise<string> => {
   return res.text();
 };
 
-// The banner ("Unresolved schedule conflicts") and the day-grouped
-// timetable list are two distinct regions of the same page; a course code
-// can legitimately appear in both at once, so assertions about "is this
-// pair still in the top alert" must be scoped to the banner region only.
+// The banner ("Unresolved schedule conflicts") and the weekly grid are two
+// distinct regions of the same page; a session can legitimately appear in
+// both at once, so assertions about "is this pair still in the top alert"
+// must be scoped to the banner region only.
 function bannerHtml(html: string): string {
   const start = html.indexOf("<h2>Unresolved schedule conflicts</h2>");
   if (start === -1) return "";
-  const end = html.indexOf("<h2>Add a session</h2>", start);
+  const end = html.indexOf("<h2>Weekly timetable</h2>", start);
   return html.slice(start, end === -1 ? undefined : end);
 }
 
-function timetableHtml(html: string): string {
-  const start = html.indexOf("Your timetable");
-  return start === -1 ? "" : html.slice(start);
+// A stable marker unique to one persisted session id, regardless of how many
+// other rows happen to share its course/activity/time text (duplicate-adding
+// the same catalogue session for a clash fixture makes those rows textually
+// identical) — every rendered session carries a delete-form action naming
+// its own id.
+const deleteMarker = (id: string) => `/api/sessions/${id}/delete`;
+
+// The ⚠ indicator only renders in the weekly grid (the banner's own rows just
+// name the two sessions in plain text) — so this scopes to that region, not
+// the whole page, and looks for the marker there specifically.
+function gridHtml(html: string): string {
+  const start = html.indexOf("<h2>Weekly timetable</h2>");
+  if (start === -1) return "";
+  const end = html.indexOf("<h2>My Courses</h2>", start);
+  return html.slice(start, end === -1 ? undefined : end);
 }
 
-// True when the given course code's row in the timetable list (not the
-// banner) carries the ⚠ indicator.
-function hasClashIndicator(html: string, courseCode: string): boolean {
-  const table = timetableHtml(html);
-  const rowIndex = table.indexOf(courseCode);
-  if (rowIndex === -1) throw new Error(`expected ${courseCode} in the timetable`);
-  return table.slice(Math.max(0, rowIndex - 300), rowIndex).includes("clash-indicator");
+// True when the given session id's row in the weekly grid carries the ⚠
+// indicator — the indicator sits just before the session's own text in the
+// markup, ahead of its delete-form action.
+function hasClashIndicator(html: string, id: string): boolean {
+  const grid = gridHtml(html);
+  const marker = deleteMarker(id);
+  const markerIndex = grid.indexOf(marker);
+  if (markerIndex === -1) throw new Error(`expected session ${id} in the weekly grid`);
+  return grid.slice(Math.max(0, markerIndex - 400), markerIndex).includes("clash-indicator");
 }
 
 describe("POST /api/clashes/acknowledge — rejects invalid requests", () => {
   it("rejects a pair naming a session id that doesn't exist", async () => {
-    const a = await createSession({ course_code: `ACK-MISSING-${Date.now()}` });
+    const a = await createSession(OTHER_SESSION);
     const res = await acknowledge(a, "999999999");
     expect(res.status).toBe(400);
+    await post(deleteMarker(a));
   });
 
   it("rejects a pair that does not currently clash", async () => {
-    const suffix = String(process.hrtime.bigint());
-    const a = await createSession({
-      course_code: `ACK-NOCLASH-A-${suffix}`,
-      day_of_week: "5",
-      start_minutes: "240",
-      end_minutes: "300",
-    });
-    const b = await createSession({
-      course_code: `ACK-NOCLASH-B-${suffix}`,
-      day_of_week: "5",
-      start_minutes: "360",
-      end_minutes: "420",
-    });
+    const a = await createSession(CLASH_SESSION);
+    const b = await createSession(OTHER_SESSION);
     const res = await acknowledge(a, b);
     expect(res.status).toBe(400);
+    await post(deleteMarker(a));
+    await post(deleteMarker(b));
   });
 
   it("rejects missing or non-integer session ids", async () => {
@@ -110,73 +115,86 @@ describe("POST /api/clashes/acknowledge — rejects invalid requests", () => {
   });
 
   it("rejects naming the same session twice", async () => {
-    const a = await createSession({ course_code: `ACK-SAME-${Date.now()}` });
+    const a = await createSession(OTHER_SESSION);
     const res = await acknowledge(a, a);
     expect(res.status).toBe(400);
+    await post(deleteMarker(a));
   });
 });
 
 describe("POST /api/clashes/acknowledge — accepted pair", () => {
   it("acknowledging a pair drops it from the top alert but keeps the ⚠ indicator, while other clashes and the underlying overlap stay unaffected", async () => {
-    const suffix = String(process.hrtime.bigint());
-    const courseA = `ACKOK-A-${suffix}`;
-    const courseB = `ACKOK-B-${suffix}`;
-    const courseC = `ACKOK-C-${suffix}`;
-
-    // A and B clash on Saturday 15:00-16:00 / 15:30-16:30.
-    const a = await createSession({ course_code: courseA, day_of_week: "5", start_minutes: "900", end_minutes: "960" });
-    const b = await createSession({ course_code: courseB, day_of_week: "5", start_minutes: "930", end_minutes: "990" });
+    // A and B are two copies of the same catalogue session, so they clash
+    // with an identical window.
+    const a = await createSession(CLASH_SESSION);
+    const b = await createSession(CLASH_SESSION);
 
     let html = await getPage();
-    expect(bannerHtml(html)).toContain(courseA);
-    expect(bannerHtml(html)).toContain(courseB);
-    expect(hasClashIndicator(html, courseA)).toBe(true);
-    expect(hasClashIndicator(html, courseB)).toBe(true);
+    expect(bannerHtml(html)).toContain(deleteMarker(a));
+    expect(bannerHtml(html)).toContain(deleteMarker(b));
+    expect(hasClashIndicator(html, a)).toBe(true);
+    expect(hasClashIndicator(html, b)).toBe(true);
 
     // Keep both.
     const ackRes = await acknowledge(a, b);
     expect(ackRes.status).toBe(303);
 
     html = await getPage();
-    expect(html).toContain(courseA);
-    expect(html).toContain(courseB);
+    expect(html).toContain(deleteMarker(a));
+    expect(html).toContain(deleteMarker(b));
     // No longer in the top alert...
-    expect(bannerHtml(html)).not.toContain(courseA);
-    expect(bannerHtml(html)).not.toContain(courseB);
+    expect(bannerHtml(html)).not.toContain(deleteMarker(a));
+    expect(bannerHtml(html)).not.toContain(deleteMarker(b));
     // ...but the underlying clash is still true, so the ⚠ stays.
-    expect(hasClashIndicator(html, courseA)).toBe(true);
-    expect(hasClashIndicator(html, courseB)).toBe(true);
+    expect(hasClashIndicator(html, a)).toBe(true);
+    expect(hasClashIndicator(html, b)).toBe(true);
 
     // A duplicate "Keep both" click is a harmless no-op.
     const ackAgain = await acknowledge(a, b);
     expect(ackAgain.status).toBe(303);
     html = await getPage();
-    expect(bannerHtml(html)).not.toContain(courseA);
-    expect(bannerHtml(html)).not.toContain(courseB);
+    expect(bannerHtml(html)).not.toContain(deleteMarker(a));
+    expect(bannerHtml(html)).not.toContain(deleteMarker(b));
 
-    // A third session C clashes with B only (Saturday 16:00-17:00 overlaps
-    // B's 15:30-16:30, but not A's 15:00-16:00).
-    await createSession({ course_code: courseC, day_of_week: "5", start_minutes: "960", end_minutes: "1020" });
+    // A third copy, C, clashes with both A and B (identical window) but its
+    // pairs with them are brand new, unacknowledged pairs.
+    const c = await createSession(CLASH_SESSION);
 
     html = await getPage();
-    // (B, C) is unacknowledged and shows up in the alert...
-    expect(bannerHtml(html)).toContain(courseB);
-    expect(bannerHtml(html)).toContain(courseC);
-    // ...but the already-acknowledged (A, B) still doesn't reappear.
-    expect(bannerHtml(html)).not.toContain(courseA);
+    // Acknowledging (A, B) doesn't blanket-suppress A or B's involvement in
+    // any OTHER unresolved pair: C's arrival makes (A, C) and (B, C) both
+    // unacknowledged, so A, B and C all show up in the alert again — even
+    // though (A, B) itself still doesn't reappear as its own alert entry.
+    expect(bannerHtml(html)).toContain(deleteMarker(a));
+    expect(bannerHtml(html)).toContain(deleteMarker(b));
+    expect(bannerHtml(html)).toContain(deleteMarker(c));
 
-    // Deleting A cascades: its acknowledgement with B is gone along with it
-    // (nothing left for it to refer to), and B/C are unaffected.
-    const delRes = await post(`/api/sessions/${a}/delete`);
+    const ackRes2 = await acknowledge(a, c);
+    expect(ackRes2.status).toBe(303);
+    const ackRes3 = await acknowledge(b, c);
+    expect(ackRes3.status).toBe(303);
+    html = await getPage();
+    expect(bannerHtml(html)).not.toContain(deleteMarker(a));
+    expect(bannerHtml(html)).not.toContain(deleteMarker(b));
+    expect(bannerHtml(html)).not.toContain(deleteMarker(c));
+
+    // Deleting A cascades: its acknowledgements (with B and with C) are gone
+    // along with it (nothing left for them to refer to). B and C still
+    // clash with each other, and that pair is still separately acknowledged,
+    // so neither reappears in the alert, and both remain in the timetable.
+    const delRes = await post(deleteMarker(a));
     expect(delRes.status).toBe(303);
 
     html = await getPage();
-    expect(html).not.toContain(courseA);
-    expect(html).toContain(courseB);
-    expect(html).toContain(courseC);
-    expect(bannerHtml(html)).toContain(courseB);
-    expect(bannerHtml(html)).toContain(courseC);
-    expect(hasClashIndicator(html, courseB)).toBe(true);
-    expect(hasClashIndicator(html, courseC)).toBe(true);
+    expect(html).not.toContain(deleteMarker(a));
+    expect(html).toContain(deleteMarker(b));
+    expect(html).toContain(deleteMarker(c));
+    expect(bannerHtml(html)).not.toContain(deleteMarker(b));
+    expect(bannerHtml(html)).not.toContain(deleteMarker(c));
+    expect(hasClashIndicator(html, b)).toBe(true);
+    expect(hasClashIndicator(html, c)).toBe(true);
+
+    await post(deleteMarker(b));
+    await post(deleteMarker(c));
   });
 });

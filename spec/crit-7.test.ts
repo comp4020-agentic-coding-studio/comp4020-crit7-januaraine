@@ -1,9 +1,10 @@
-import { beforeAll, describe, expect, inject, it } from "vitest";
+import { describe, expect, inject, it } from "vitest";
+import { seedClassSessionId, seedOfferingId } from "../src/lib/catalogue-seed";
 
 // The real check behind spec line 3 ("the core flow persists across a
-// reload — create something, and it's still there"), now that the sessions
-// API (spec/sessions-api.test.ts) and the UI both exist. Drives the running
-// built server over HTTP: create a session, create one that overlaps it,
+// reload — create something, and it's still there"), now that the app is a
+// course-selection flow rather than a free-text form: select a course, add
+// one of its sessions, select a second course, add a conflicting session,
 // confirm the create redirect exposes the clash, resolve it by removing one
 // side, then reload the page from scratch and check what's actually there —
 // not what the handlers did internally.
@@ -32,47 +33,37 @@ const clashesWithFrom = (res: Response): string[] => {
   return raw ? raw.split(",") : [];
 };
 
+// This is its own genuine two-different-real-courses clash — a session from
+// COMP1100 and a session from COMP2100 that share a window — reserved here
+// and touched by no other spec file (see spec/sessions-api.test.ts and
+// spec/acknowledgements-api.test.ts for their own reservations against the
+// same shared server + database, spec/global-setup.ts).
+const COURSE_A_OFFERING = seedOfferingId("COMP1100");
+const COURSE_A_SESSION = seedClassSessionId("COMP1100", "Tutorial", 1); // Tue 14:00-15:00
+const COURSE_B_OFFERING = seedOfferingId("COMP2100");
+const COURSE_B_SESSION = seedClassSessionId("COMP2100", "Tutorial", 1); // Tue 14:00-15:00
+
+const selectCourse = (offeringId: number) => post("/api/courses/select", new URLSearchParams({ offering_id: String(offeringId) }));
+const addFromCatalogue = (classSessionId: number) =>
+  post("/api/sessions", new URLSearchParams({ class_session_id: String(classSessionId) }));
+
 describe("core flow persistence (spec line 3)", () => {
-  // Unique per run so this test can't be confused by course codes any other
-  // spec file happens to have left in the shared throwaway database.
-  let courseA: string;
-  let courseB: string;
+  it("select course -> add session -> select conflicting course -> add its session -> clash -> resolve -> reload: B persists, A is gone", async () => {
+    const selectA = await selectCourse(COURSE_A_OFFERING);
+    expect(selectA.status).toBe(303);
 
-  beforeAll(() => {
-    const probe = process.hrtime.bigint();
-    courseA = `C7A${probe}`;
-    courseB = `C7B${probe}`;
-  });
-
-  it("create -> clash -> resolve -> reload: B persists, A is gone", async () => {
-    // Create session A: Monday 09:00-10:00.
-    const a = await post(
-      "/api/sessions",
-      new URLSearchParams({
-        course_code: courseA,
-        activity: "Lecture",
-        day_of_week: "0",
-        start_minutes: "540",
-        end_minutes: "600",
-      }),
-    );
+    const a = await addFromCatalogue(COURSE_A_SESSION);
     expect(a.status).toBe(303);
     const aId = addedIdFrom(a);
     expect(aId).not.toBe("");
 
-    // Create session B, overlapping A on the same day (09:30-10:30).
-    const b = await post(
-      "/api/sessions",
-      new URLSearchParams({
-        course_code: courseB,
-        activity: "Tutorial",
-        day_of_week: "0",
-        start_minutes: "570",
-        end_minutes: "630",
-      }),
-    );
+    const selectB = await selectCourse(COURSE_B_OFFERING);
+    expect(selectB.status).toBe(303);
+
+    const b = await addFromCatalogue(COURSE_B_SESSION);
     expect(b.status).toBe(303);
-    expect(addedIdFrom(b)).not.toBe("");
+    const bId = addedIdFrom(b);
+    expect(bId).not.toBe("");
 
     // The create response exposes the clash against A.
     expect(clashesWithFrom(b)).toEqual([aId]);
@@ -84,7 +75,7 @@ describe("core flow persistence (spec line 3)", () => {
     // Reload the page from scratch: B is still there, A is not.
     const reload = await fetch(baseUrl);
     const html = await reload.text();
-    expect(html).toContain(courseB);
-    expect(html).not.toContain(courseA);
+    expect(html).toContain(`/api/sessions/${bId}/delete`);
+    expect(html).not.toContain(`/api/sessions/${aId}/delete`);
   });
 });
