@@ -35,9 +35,12 @@ const clashesWithFrom = (res: Response): string[] => {
 
 // This is its own genuine two-different-real-courses clash — a session from
 // COMP1100 and a session from COMP2100 that share a window — reserved here
-// and touched by no other spec file (see spec/sessions-api.test.ts and
+// and named by no other spec file (see spec/sessions-api.test.ts and
 // spec/acknowledgements-api.test.ts for their own reservations against the
-// same shared server + database, spec/global-setup.ts).
+// same shared server + database, spec/global-setup.ts). The window itself
+// (Tue 14:00-15:00) does coincide with COMP4020's own Tutorial, which
+// spec/add-all-sessions-api.test.ts adds via its whole-offering "add all"
+// call — so the clash assertion below checks membership, not an exact list.
 const COURSE_A_OFFERING = seedOfferingId("COMP1100");
 const COURSE_A_SESSION = seedClassSessionId("COMP1100", "Tutorial", 1); // Tue 14:00-15:00
 const COURSE_B_OFFERING = seedOfferingId("COMP2100");
@@ -65,8 +68,11 @@ describe("core flow persistence (spec line 3)", () => {
     const bId = addedIdFrom(b);
     expect(bId).not.toBe("");
 
-    // The create response exposes the clash against A.
-    expect(clashesWithFrom(b)).toEqual([aId]);
+    // The create response exposes the clash against A. Scoped with
+    // toContain rather than toEqual: another spec file's own fixture may
+    // already occupy this same time-of-week (see the comment above), so
+    // more than one clashing id can legitimately be present.
+    expect(clashesWithFrom(b)).toContain(aId);
 
     // Resolve the clash by removing session A.
     const del = await post(`/api/sessions/${aId}/delete`);
